@@ -42,7 +42,7 @@ def test_url_availability(url):
     try:
         headers = {
             'User-Agent': STREAM_USER_AGENT,
-            'Range': 'bytes=0-1'  # Sadece ilk byte'ı iste
+            'Range': 'bytes=0-1'
         }
         response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
         
@@ -52,16 +52,9 @@ def test_url_availability(url):
         else:
             print(f"❌ Video URL erişilemiyor: {response.status_code}")
             return False
-    except requests.exceptions.SSLError as e:
-        print(f"⚠️ SSL Hatası: {e}")
-        print("ℹ️ SSL doğrulaması devre dışı bırakılarak deneniyor...")
-        return True  # SSL hatası olsa da FFmpeg ile denenebilir
-    except requests.exceptions.ConnectionError as e:
-        print(f"❌ Bağlantı hatası: {e}")
-        return False
     except Exception as e:
         print(f"⚠️ URL test hatası: {e}")
-        return True  # Hata olsa da FFmpeg ile denemeye devam
+        return True
 
 def test_rtmp_connection():
     """RTMP sunucusuna bağlanılabilirliği test eder."""
@@ -131,7 +124,6 @@ def get_m3u_playlist(m3u_url):
                     pending_title = match.group(1).strip() if match else None
                 elif not line.startswith('#') and line.startswith('http'):
                     title = pending_title or os.path.basename(line.split('?')[0])
-                    # URL'yi decode et
                     clean_url = unquote(line)
                     playlist.append({"url": clean_url, "title": title})
                     pending_title = None
@@ -145,7 +137,6 @@ def get_m3u_playlist(m3u_url):
     except Exception as e:
         print(f"⚠️ M3U çekme hatası: {e}")
     
-    # Fallback: URL'yi doğrudan kullan
     clean_url = unquote(m3u_url)
     return [{"url": clean_url, "title": os.path.basename(clean_url)}]
 
@@ -216,7 +207,6 @@ def run_ffmpeg_stream(command, current_index, film_title, playlist_len, last_sec
         if not line and process.poll() is not None:
             break
 
-        # Hata mesajlarını kontrol et
         if "error" in line.lower() or "failed" in line.lower():
             has_error = True
             print(f"⚠️ FFmpeg Hatası: {line.strip()}")
@@ -251,7 +241,6 @@ def start_m3u_stream():
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
 
-    # RTMP bağlantısını test et
     if not test_rtmp_connection():
         print("⚠️ RTMP sunucusuna bağlanılamıyor, 30 saniye beklenip tekrar deneniyor...")
         time.sleep(30)
@@ -260,12 +249,10 @@ def start_m3u_stream():
 
     current_index, last_seconds = get_local_state()
     retry_count = 0
-    failed_urls = set()  # Başarısız URL'leri hatırla
+    failed_urls = set()
 
     while True:
-        # Retry count sıfırlama
         if retry_count > 0 and retry_count % 5 == 0:
-            # Her 5 hatada bir bağlantıyı test et
             test_rtmp_connection()
 
         playlist = get_m3u_playlist(M3U_URL)
@@ -284,7 +271,6 @@ def start_m3u_stream():
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
-        # Eğer bu URL daha önce başarısız olduysa, geç
         if target_stream_url in failed_urls:
             print(f"⚠️ URL daha önce başarısız oldu, sıradaki içeriğe geçiliyor...")
             current_index += 1
@@ -298,7 +284,6 @@ def start_m3u_stream():
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
-        # URL'yi test et
         print("🔍 Video kaynağı kontrol ediliyor...")
         url_ok = test_url_availability(target_stream_url)
         if not url_ok:
@@ -311,7 +296,7 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # URL'yi parse et - SSL sorunları için
+        # URL'yi parse et
         if "|" in target_stream_url:
             video_url, audio_url = target_stream_url.split("|", 1)
             video_url = video_url.strip()
@@ -320,7 +305,6 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url[:80]}...")
             print(f"🔊 Ses Bağlantısı   : {audio_url[:80]}...")
 
-            # SSL doğrulamasını devre dışı bırak (bazı HTTPS sunucularında sorun olabilir)
             input_args = [
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
@@ -338,7 +322,6 @@ def start_m3u_stream():
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url[:80]}...")
             
-            # SSL doğrulamasını devre dışı bırak
             input_args = [
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
@@ -370,13 +353,10 @@ def start_m3u_stream():
             )
             logo_input = []
 
-        # FFmpeg komutunu oluştur - SSL sorunları için ek parametreler
+        # FFmpeg komutunu oluştur - SADECE GEÇERLİ PARAMETRELER
         command = [
             'ffmpeg',
             '-loglevel', 'warning',
-            # SSL sorunları için:
-            '-ca_info', '/dev/null',  # SSL sertifika kontrolünü devre dışı bırak
-            '-noverify',  # SSL doğrulamasını devre dışı bırak
         ] + input_args + logo_input + [
             '-filter_complex', filter_str,
             '-map', '[v]'
@@ -411,17 +391,14 @@ def start_m3u_stream():
             retry_count = 0
             failed_urls.clear()
         else:
-            # Hata durumu
             retry_count += 1
             
-            # Eğer URL kaynaklı bir hata ise (Invalid data), URL'yi başarısız listesine ekle
-            if has_error or return_code == 183:
+            if has_error or return_code in [183, 8]:
                 print(f"⚠️ Video kaynağında sorun var, URL not alınıyor...")
                 failed_urls.add(target_stream_url)
             
             print(f"⚠️ Yayın koptu (Return Code: {return_code}) - Deneme: {retry_count}/{MAX_RETRY_COUNT}")
             
-            # Kritik hatalarda bekleme süresini artır
             if return_code == 183:
                 print("⚠️ RTMP bağlantı hatası, sunucu kontrol ediliyor...")
                 test_rtmp_connection()
@@ -435,7 +412,6 @@ def start_m3u_stream():
             last_seconds = current_stream_seconds
             update_local_state(current_index, last_seconds)
 
-            # Maksimum deneme sayısına ulaşıldıysa
             if retry_count >= MAX_RETRY_COUNT:
                 print("❌ Maksimum deneme sayısına ulaşıldı, sıradaki içeriğe geçiliyor...")
                 current_index += 1
