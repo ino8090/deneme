@@ -9,7 +9,7 @@ import re
 import json
 import requests
 import socket
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse, unquote, quote
 
 # ===================== AYARLAR =====================
 RTMP_URL = os.getenv("RTMP_URL") or "rtmp://ssh101.bozztv.com:1935/ssh101"
@@ -22,52 +22,40 @@ LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_maxdeneme.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
-STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+# VLC benzeri User-Agent
+STREAM_USER_AGENT = "VLC/3.0.18 LibVLC/3.0.18"
 
-# Yeniden bağlanma ayarları
-MAX_RETRY_COUNT = 10
-BASE_RETRY_DELAY = 5
-MAX_RETRY_DELAY = 120
+# ===================== YENİ HTTP BAŞLIKLARI =====================
+HTTP_HEADERS = f"""User-Agent: {STREAM_USER_AGENT}
+Accept: */*
+Accept-Encoding: gzip, deflate, br
+Accept-Language: tr-TR,tr;q=0.9,en;q=0.8
+Connection: keep-alive
+Referer: https://s7.gelsistirire.top/
+Origin: https://s7.gelsistirire.top
+Sec-Fetch-Dest: video
+Sec-Fetch-Mode: cors
+Sec-Fetch-Site: same-origin
+"""
+
+# ===================== AYARLAR SONU =====================
 
 def format_hms(total_seconds):
-    """Saniyeyi SS:DD:SS formatına çevirir."""
     total_seconds = int(total_seconds)
     hrs = total_seconds // 3600
     mins = (total_seconds % 3600) // 60
     secs = total_seconds % 60
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
 
-def test_url_availability(url):
-    """Video URL'sinin erişilebilir olup olmadığını test eder."""
-    try:
-        headers = {
-            'User-Agent': STREAM_USER_AGENT,
-            'Range': 'bytes=0-1'
-        }
-        response = requests.head(url, headers=headers, timeout=10, allow_redirects=True)
-        
-        if response.status_code in [200, 206, 302, 301]:
-            print(f"✅ Video URL erişilebilir: {response.status_code}")
-            return True
-        else:
-            print(f"❌ Video URL erişilemiyor: {response.status_code}")
-            return False
-    except Exception as e:
-        print(f"⚠️ URL test hatası: {e}")
-        return True
-
 def test_rtmp_connection():
-    """RTMP sunucusuna bağlanılabilirliği test eder."""
     try:
         parsed = urlparse(RTMP_URL)
         host = parsed.hostname or "ssh101.bozztv.com"
         port = parsed.port or 1935
-        
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5)
         result = sock.connect_ex((host, port))
         sock.close()
-        
         if result == 0:
             print(f"✅ RTMP sunucusuna bağlanılabiliyor: {host}:{port}")
             return True
@@ -79,7 +67,6 @@ def test_rtmp_connection():
         return False
 
 def get_local_state():
-    """Yerel state dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
@@ -95,7 +82,6 @@ def get_local_state():
     return 0, 0
 
 def update_local_state(index, seconds):
-    """Son konumu yerel state dosyasına kaydeder."""
     try:
         data = {"last_index": int(index), "last_seconds": int(seconds)}
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
@@ -107,7 +93,6 @@ def update_local_state(index, seconds):
         return False
 
 def get_m3u_playlist(m3u_url):
-    """M3U playlist'ini çeker ve parse eder."""
     try:
         headers = {'User-Agent': STREAM_USER_AGENT}
         response = requests.get(m3u_url, headers=headers, timeout=15)
@@ -124,8 +109,7 @@ def get_m3u_playlist(m3u_url):
                     pending_title = match.group(1).strip() if match else None
                 elif not line.startswith('#') and line.startswith('http'):
                     title = pending_title or os.path.basename(line.split('?')[0])
-                    clean_url = unquote(line)
-                    playlist.append({"url": clean_url, "title": title})
+                    playlist.append({"url": line, "title": title})
                     pending_title = None
             if playlist:
                 print(f"✅ Playlist'ten {len(playlist)} içerik yüklendi")
@@ -136,12 +120,9 @@ def get_m3u_playlist(m3u_url):
                 print("⚠️ Playlist boş, tek dosya olarak kullanılıyor")
     except Exception as e:
         print(f"⚠️ M3U çekme hatası: {e}")
-    
-    clean_url = unquote(m3u_url)
-    return [{"url": clean_url, "title": os.path.basename(clean_url)}]
+    return [{"url": m3u_url, "title": os.path.basename(m3u_url)}]
 
 def download_logo():
-    """Logo dosyasını indirir."""
     try:
         headers = {'User-Agent': STREAM_USER_AGENT}
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
@@ -158,7 +139,6 @@ def download_logo():
         return False
 
 def print_dashboard(title, index, playlist_len, seconds, status="🟢 Yayında"):
-    """Konsol dashboard'u gösterir."""
     print("┌" + "─" * 58 + "┐")
     print(f"│ 🎬 İçerik         : {title[:36]:<36} │")
     print(f"│ 🔢 Sıra           : {index + 1}/{playlist_len:<32} │")
@@ -167,7 +147,6 @@ def print_dashboard(title, index, playlist_len, seconds, status="🟢 Yayında")
     print("└" + "─" * 58 + "┘")
 
 def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayında"):
-    """GitHub Step Summary'a durumu yazar."""
     if not GITHUB_STEP_SUMMARY:
         return
     try:
@@ -187,7 +166,6 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
         print(f"⚠️ Step summary yazma hatası: {e}")
 
 def run_ffmpeg_stream(command, current_index, film_title, playlist_len, last_seconds):
-    """FFmpeg stream'ini çalıştırır ve izler."""
     print("▶ FFmpeg başlatıldı, 1080p 30fps @ 2000k yayın iletiliyor...")
     
     process = subprocess.Popen(
@@ -232,7 +210,6 @@ def run_ffmpeg_stream(command, current_index, film_title, playlist_len, last_sec
     return process.returncode, current_stream_seconds, has_error
 
 def start_m3u_stream():
-    """Ana stream fonksiyonu."""
     print("=" * 60)
     print("📺 maxdeneme Canlı Yayın Sistemi Başlatılıyor")
     print("=" * 60)
@@ -240,6 +217,7 @@ def start_m3u_stream():
     print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
+    print(f"🔧 User-Agent       : {STREAM_USER_AGENT}")
 
     if not test_rtmp_connection():
         print("⚠️ RTMP sunucusuna bağlanılamıyor, 30 saniye beklenip tekrar deneniyor...")
@@ -279,22 +257,10 @@ def start_m3u_stream():
             continue
 
         print("=" * 60)
-        print(f"📺 Yayın Başlatılıyor (Deneme: {retry_count + 1}/{MAX_RETRY_COUNT})")
+        print(f"📺 Yayın Başlatılıyor (Deneme: {retry_count + 1}/10)")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
-
-        print("🔍 Video kaynağı kontrol ediliyor...")
-        url_ok = test_url_availability(target_stream_url)
-        if not url_ok:
-            print("❌ Video kaynağına erişilemiyor, sıradaki içeriğe geçiliyor...")
-            failed_urls.add(target_stream_url)
-            current_index += 1
-            last_seconds = 0
-            update_local_state(current_index, 0)
-            continue
-
-        headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
         # URL'yi parse et
         if "|" in target_stream_url:
@@ -305,14 +271,19 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url[:80]}...")
             print(f"🔊 Ses Bağlantısı   : {audio_url[:80]}...")
 
+            # ====== YENİ: HTTP başlıklarını ekle ======
             input_args = [
-                '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-headers', HTTP_HEADERS,  # VLC benzeri başlıklar
+                '-reconnect', '1', 
+                '-reconnect_streamed', '1', 
+                '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
                 '-re',
                 '-i', video_url,
-                '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-headers', HTTP_HEADERS,  # İkinci giriş için de aynı başlıklar
+                '-reconnect', '1', 
+                '-reconnect_streamed', '1', 
+                '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
                 '-re',
                 '-i', audio_url
@@ -322,9 +293,12 @@ def start_m3u_stream():
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url[:80]}...")
             
+            # ====== YENİ: HTTP başlıklarını ekle ======
             input_args = [
-                '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-headers', HTTP_HEADERS,  # VLC benzeri başlıklar
+                '-reconnect', '1', 
+                '-reconnect_streamed', '1', 
+                '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
                 '-re',
                 '-i', target_stream_url
@@ -337,7 +311,6 @@ def start_m3u_stream():
 
         has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # FFmpeg filter
         if has_logo:
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
@@ -353,10 +326,11 @@ def start_m3u_stream():
             )
             logo_input = []
 
-        # FFmpeg komutunu oluştur - SADECE GEÇERLİ PARAMETRELER
+        # FFmpeg komutu
         command = [
             'ffmpeg',
             '-loglevel', 'warning',
+            '-user_agent', STREAM_USER_AGENT,
         ] + input_args + logo_input + [
             '-filter_complex', filter_str,
             '-map', '[v]'
@@ -376,12 +350,10 @@ def start_m3u_stream():
             RTMP_SERVER
         ]
 
-        # FFmpeg'i çalıştır
         return_code, current_stream_seconds, has_error = run_ffmpeg_stream(
             command, current_index, film_title, len(playlist), last_seconds
         )
 
-        # Sonucu değerlendir
         if return_code == 0:
             print("✅ İçerik başarıyla tamamlandı, sıradakine geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
@@ -393,18 +365,18 @@ def start_m3u_stream():
         else:
             retry_count += 1
             
-            if has_error or return_code in [183, 8]:
+            if has_error or return_code in [183, 8, 1]:
                 print(f"⚠️ Video kaynağında sorun var, URL not alınıyor...")
                 failed_urls.add(target_stream_url)
             
-            print(f"⚠️ Yayın koptu (Return Code: {return_code}) - Deneme: {retry_count}/{MAX_RETRY_COUNT}")
+            print(f"⚠️ Yayın koptu (Return Code: {return_code}) - Deneme: {retry_count}/10")
             
             if return_code == 183:
                 print("⚠️ RTMP bağlantı hatası, sunucu kontrol ediliyor...")
                 test_rtmp_connection()
-                wait_time = min(MAX_RETRY_DELAY, BASE_RETRY_DELAY * (2 ** min(retry_count, 5)))
+                wait_time = min(120, 5 * (2 ** min(retry_count, 5)))
             else:
-                wait_time = min(MAX_RETRY_DELAY, BASE_RETRY_DELAY * (1.5 ** min(retry_count, 3)))
+                wait_time = min(120, 5 * (1.5 ** min(retry_count, 3)))
             
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, 
                              status=f"🔴 Bağlantı koptu (RC: {return_code}), {int(wait_time)}sn sonra tekrar")
@@ -412,7 +384,7 @@ def start_m3u_stream():
             last_seconds = current_stream_seconds
             update_local_state(current_index, last_seconds)
 
-            if retry_count >= MAX_RETRY_COUNT:
+            if retry_count >= 10:
                 print("❌ Maksimum deneme sayısına ulaşıldı, sıradaki içeriğe geçiliyor...")
                 current_index += 1
                 last_seconds = 0
