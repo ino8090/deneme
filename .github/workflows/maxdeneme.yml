@@ -1,13 +1,17 @@
 name: maxdeneme
+
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
+  schedule:
+    # Her 4 saatte bir kontrol et (opsiyonel)
+    - cron: '0 */4 * * *'
 
 jobs:
   yayin:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 420  # 7 saat (Github limiti 6 saat, biraz buffer)
     permissions:
       contents: write
     steps:
@@ -22,17 +26,19 @@ jobs:
     - name: 📦 FFmpeg ve Kurulumlar
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl
+        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl netcat-openbsd
         pip install requests
 
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
       run: |
-        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_maxdeneme.json -o state_maxdeneme.json
+        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_maxdeneme.json -o state_maxdeneme.json || echo "{}" > state_maxdeneme.json
 
     - name: 🚀 Yayını başlat
       env:
         STATE_FILE_NAME: "state_maxdeneme.json"
+        RTMP_URL: "rtmp://ssh101.bozztv.com:1935/ssh101"
+        STREAM_KEY: "denme"
       run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
@@ -47,13 +53,13 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: 🔁 Süre doldu, yeni run'ı tetikle
-      if: '${{ !cancelled() }}'
+    - name: 🔁 Workflow'u Yeniden Tetikle
+      if: always() && !cancelled()
       env:
-        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         curl -X POST \
           -H "Authorization: token $GH_TOKEN" \
           -H "Accept: application/vnd.github+json" \
           "https://api.github.com/repos/${{ github.repository }}/actions/workflows/maxdeneme.yml/dispatches" \
-          -d '{"ref":"${{ github.ref_name }}"}'
+          -d '{"ref":"${{ github.ref_name }}"}' || echo "Tetikleme başarısız, manuel başlatın"
