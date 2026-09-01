@@ -169,6 +169,7 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
+        # -ss parametresi HLS stabilitesi için input sonrasına atanıyor
         ss_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
         if ";" in target_stream_url:
@@ -181,24 +182,21 @@ def start_m3u_stream():
 
             input_args = [
                 '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5'
-            ] + ss_args + [
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-i', video_url,
                 '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5'
-            ] + ss_args + [
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-i', audio_url
-            ]
+            ] + ss_args
             audio_map = ['-map', '1:a:0']
             logo_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
                 '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5'
-            ] + ss_args + [
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-i', target_stream_url
-            ]
+            ] + ss_args
             audio_map = ['-map', '0:a?']
             logo_input_index = 1
 
@@ -230,16 +228,16 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,setpts=PTS-STARTPTS[main];'
-                f'[{logo_input_index}:v]scale=-2:60,format=rgba,colorchannelmixer=aa={logo_alpha},setpts=PTS-STARTPTS[logo];'
-                '[main][logo]overlay=main_w-overlay_w-83:83[tmp];'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                f'[{logo_input_index}:v]scale=-2:55,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
+                '[main][logo]overlay=main_w-overlay_w-79:79[tmp];'
                 f'[tmp]{drawtext_str}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(oh-ih)/2:black,fps=30,setpts=PTS-STARTPTS[tmp];'
+                'pad=1920:1080:(oh-ih)/2:black,fps=30[tmp];'
                 f'[tmp]{drawtext_str}[v]'
             )
 
