@@ -216,16 +216,16 @@ def start_m3u_stream():
         logo_alpha = "0.8"
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-        # TEMİZ YAZI (Siyah kenarlık kaldırıldı):
+        # Hatasız, kenarlıksız drawtext filtresi
         if os.path.exists(font_path):
             drawtext_filter = (
                 f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}[v]"
+                f"fontcolor={text_color}"
             )
         else:
             drawtext_filter = (
                 f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}[v]"
+                f"fontcolor={text_color}"
             )
 
         if has_logo:
@@ -234,15 +234,15 @@ def start_m3u_stream():
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo_input_index}:v]scale=-2:60,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
-                '[main][logo]overlay=main_w-overlay_w-85:85[tmp];'
-                f'[tmp]{drawtext_filter}'
+                '[main][logo]overlay=main_w-overlay_w-83:83[tmp];'
+                f'[tmp]{drawtext_filter}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(oh-ih)/2:black,fps=30[tmp];'
-                f'[tmp]{drawtext_filter}'
+                f'[tmp]{drawtext_filter}[v]'
             )
 
         command = [
