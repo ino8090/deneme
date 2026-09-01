@@ -211,14 +211,23 @@ def start_m3u_stream():
         has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
-        # --- YAZI RENK SEÇİMİ ---
+        # --- YAZI SEÇENEKLERİ ---
         text_color = "white@0.8"
+        
+        # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-        # Film adı sol alt köşede, arka plansız ve 2px siyah dış çizgi ile
-        drawtext_filter = (
-            f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
-            f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
-        )
+        # Font parametresi eklendi, pozisyon (x=90:y=h-80) ve stil korundu
+        if os.path.exists(font_path):
+            drawtext_filter = (
+                f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
+                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
+            )
+        else:
+            drawtext_filter = (
+                f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
+                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
+            )
 
         if has_logo:
             logo_inputs = ['-i', 'logo.png']
