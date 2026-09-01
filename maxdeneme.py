@@ -169,7 +169,7 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # -ss parametresi HLS stabilitesi için input sonrasına atanıyor
+        # -ss parametresi sadece saniye > 0 ise input öncesine verilir (HLS seeker tam uyumlu)
         ss_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
         if ";" in target_stream_url:
@@ -180,23 +180,24 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
-            input_args = [
+            input_args = ss_args + [
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-i', video_url,
+                '-i', video_url
+            ] + ss_args + [
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-i', audio_url
-            ] + ss_args
+            ]
             audio_map = ['-map', '1:a:0']
             logo_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            input_args = [
+            input_args = ss_args + [
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-i', target_stream_url
-            ] + ss_args
+            ]
             audio_map = ['-map', '0:a?']
             logo_input_index = 1
 
