@@ -235,7 +235,7 @@ def start_m3u_stream():
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI VE LOGO STİL AYARLARI ---
-        text_color = "white@0.8"
+        text_color = "white@0.6"
         logo_alpha = "0.8"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
 
         # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
