@@ -244,12 +244,12 @@ def start_m3u_stream():
         if os.path.exists(font_path):
             drawtext_filter = (
                 f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
+                f"fontcolor={text_color}[v]"
             )
         else:
             drawtext_filter = (
                 f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
+                f"fontcolor={text_color}[v]"
             )
 
         if has_logo:
@@ -257,8 +257,8 @@ def start_m3u_stream():
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo_input_index}:v]scale=-2:60,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
-                '[main][logo]overlay=main_w-overlay_w-85:85[tmp];'
+                f'[{logo_input_index}:v]scale=-2:80,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
+                '[main][logo]overlay=main_w-overlay_w-98:98[tmp];'
                 f'[tmp]{drawtext_filter}'
             )
         else:
