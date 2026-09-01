@@ -11,12 +11,11 @@ import requests
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "6666"
+STREAM_KEY = os.getenv("STREAM_KEY") or "fixtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/mpremiuum.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1787671958979.png"
-LOGO2_URL = os.getenv("LOGO2_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/file_00000000eae88246b13a221f896ea385.png"
+M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788217397352.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_maxanimasyon.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -31,6 +30,17 @@ def format_hms(total_seconds):
     mins = (total_seconds % 3600) // 60
     secs = total_seconds % 60
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+
+def sanitize_text_for_ffmpeg(text):
+    """FFmpeg drawtext filtresinde hata vermemesi için özel karakterleri kaçırır."""
+    if not text:
+        return ""
+    text = text.replace('\\', '\\\\')
+    text = text.replace("'", "'\\\\''")
+    text = text.replace(':', '\\:')
+    text = text.replace('%', '\\%')
+    return text
 
 
 def get_local_state():
@@ -88,26 +98,14 @@ def get_m3u_playlist(m3u_url):
 
 def download_logo():
     headers = {'User-Agent': STREAM_USER_AGENT}
-    
-    # 1. Logo İndir (Sol Üst)
     try:
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
         if response.status_code == 200 and len(response.content) > 0:
             with open('logo.png', 'wb') as f:
                 f.write(response.content)
-            print("✅ 1. Logo başarıyla indirildi.")
+            print("✅ Logo başarıyla indirildi.")
     except Exception as e:
-        print(f"⚠️ 1. Logo indirme hatası: {e}")
-
-    # 2. Logo İndir (Sağ Üst)
-    try:
-        response2 = requests.get(LOGO2_URL, headers=headers, timeout=15)
-        if response2.status_code == 200 and len(response2.content) > 0:
-            with open('logo2.png', 'wb') as f:
-                f.write(response2.content)
-            print("✅ 2. Logo başarıyla indirildi.")
-    except Exception as e:
-        print(f"⚠️ 2. Logo indirme hatası: {e}")
+        print(f"⚠️ Logo indirme hatası: {e}")
 
 
 def print_dashboard(title, index, playlist_len, seconds, status="🟢 Yayında"):
@@ -141,8 +139,7 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
 
 def start_m3u_stream():
     print(f"🔧 Kullanılan M3U   : {M3U_URL}")
-    print(f"🔧 Kullanılan Logo 1: {LOGO_URL}")
-    print(f"🔧 Kullanılan Logo 2: {LOGO2_URL}")
+    print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
 
@@ -172,7 +169,6 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # --- ÇİFT LİNK (VIDEO + SES SEPARATÖRÜ: ;) VE TEK LİNK KONTROLÜ ---
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -194,8 +190,7 @@ def start_m3u_stream():
                 '-i', audio_url
             ]
             audio_map = ['-map', '1:a:0']
-            logo1_input_index = 2
-            logo2_input_index = 3
+            logo_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
@@ -206,53 +201,42 @@ def start_m3u_stream():
                 '-i', target_stream_url
             ]
             audio_map = ['-map', '0:a?']
-            logo1_input_index = 1
-            logo2_input_index = 2
+            logo_input_index = 1
 
         print("=" * 60)
 
         print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
         write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
-        has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-        has_logo2 = os.path.exists('logo2.png') and os.path.getsize('logo2.png') > 0
+        has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
+        safe_title = sanitize_text_for_ffmpeg(film_title)
 
-        logo_inputs = []
-        
-        # Filtre zinciri:
-        # Sol üst logo: yükseklik 80px (scale=-2:80), overlay=50:50
-        # Sağ üst logo: yükseklik 30px (scale=-2:30), overlay=main_w-overlay_w-50:50
-        if has_logo1 and has_logo2:
-            logo_inputs = ['-i', 'logo.png', '-i', 'logo2.png']
-            filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo1_input_index}:v]scale=-2:80[logo1];'
-                f'[{logo2_input_index}:v]scale=-2:20[logo2];'
-                '[main][logo1]overlay=50:50[tmp];'
-                '[tmp][logo2]overlay=main_w-overlay_w-50:50[v]'
-            )
-        elif has_logo1:
+        # --- YAZI RENK SEÇİMİ ---
+        # İster renk ismi (yellow, white, cyan vb.) ister HEX kodu (0xFFD700 vb.) kullanabilirsin.
+        text_color = "yellow"
+
+        # Arka plan kutusu (box) kaldırıldı.
+        # Okunabilirlik için 2px siyah dış çizgi (borderw=2:bordercolor=black) eklendi.
+        drawtext_filter = (
+            f"drawtext=text='{safe_title}':x=50:y=h-80:fontsize=28:"
+            f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
+        )
+
+        if has_logo:
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo1_input_index}:v]scale=-2:80[logo1];'
-                '[main][logo1]overlay=50:50[v]'
-            )
-        elif has_logo2:
-            logo_inputs = ['-i', 'logo2.png']
-            filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo2_input_index}:v]scale=-2:20[logo2];'
-                '[main][logo2]overlay=main_w-overlay_w-50:50[v]'
+                f'[{logo_input_index}:v]scale=-2:80[logo];'
+                '[main][logo]overlay=main_w-overlay_w-50:50[tmp];'
+                f'[tmp]{drawtext_filter}'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(oh-ih)/2:black,fps=30[v]'
+                'pad=1920:1080:(oh-ih)/2:black,fps=30[tmp];'
+                f'[tmp]{drawtext_filter}'
             )
 
         command = [
