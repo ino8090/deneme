@@ -33,7 +33,7 @@ jobs:
     - name: 🚀 Yayını başlat
       env:
         STATE_FILE_NAME: "state_maxpremier.json"
-      run: python -u maxpremier.py
+      run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
       if: always()
