@@ -212,11 +212,11 @@ def start_m3u_stream():
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI RENK SEÇİMİ ---
-        text_color = "white@0.3"
+        text_color = "white@0.1"
 
         # Film adı sol alt köşede, arka plansız ve 2px siyah dış çizgi ile
         drawtext_filter = (
-            f"drawtext=text='{safe_title}':x=60:y=h-80:fontsize=27:"
+            f"drawtext=text='{safe_title}':x=70:y=h-80:fontsize=30:"
             f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
         )
 
@@ -225,8 +225,8 @@ def start_m3u_stream():
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo_input_index}:v]scale=-2:69[logo];'
-                '[main][logo]overlay=main_w-overlay_w-60:60[tmp];'
+                f'[{logo_input_index}:v]scale=-2:50[logo];'
+                '[main][logo]overlay=main_w-overlay_w-75:75[tmp];'
                 f'[tmp]{drawtext_filter}'
             )
         else:
