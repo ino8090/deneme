@@ -101,10 +101,14 @@ def download_logo():
     headers = {'User-Agent': STREAM_USER_AGENT}
     try:
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
+        print(f"ℹ️ Logo isteği durum kodu: {response.status_code}, boyut: {len(response.content)} byte")
         if response.status_code == 200 and len(response.content) > 0:
             with open('logo.png', 'wb') as f:
                 f.write(response.content)
-            print("✅ Logo başarıyla indirildi.")
+            saved_size = os.path.getsize('logo.png')
+            print(f"✅ Logo başarıyla indirildi ve kaydedildi. Dosya boyutu: {saved_size} byte, Yol: {os.path.abspath('logo.png')}")
+        else:
+            print(f"⚠️ Logo indirilemedi. Beklenmeyen durum kodu ya da boş içerik (status={response.status_code}).")
     except Exception as e:
         print(f"⚠️ Logo indirme hatası: {e}")
 
@@ -208,6 +212,7 @@ def start_m3u_stream():
         write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
         has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
+        print(f"ℹ️ Logo durumu kontrolü => Dosya var mı: {os.path.exists('logo.png')}, has_logo: {has_logo}")
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI VE LOGO STİL AYARLARI ---
