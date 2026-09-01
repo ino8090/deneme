@@ -8,6 +8,7 @@ import os
 import re
 import json
 import requests
+from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
@@ -264,6 +265,9 @@ def start_m3u_stream():
         ]
 
         print("▶ FFmpeg başlatıldı, 1080p 30fps @ 2000k yayın iletiliyor...")
+        print("--- FFmpeg komutu ---")
+        print(" ".join(command))
+        print("---------------------")
 
         process = subprocess.Popen(
             command,
@@ -275,10 +279,20 @@ def start_m3u_stream():
         last_dashboard_time = time.time()
         current_stream_seconds = last_seconds
 
+        # Son N satırı hafızada tut; hata olduğunda gerçek nedeni ekrana basmak için.
+        error_tail = deque(maxlen=40)
+
         while True:
             line = process.stderr.readline()
             if not line and process.poll() is not None:
                 break
+
+            if line:
+                # DEĞİŞİKLİK 1: ffmpeg'in gerçek çıktısını canlı olarak logla.
+                # Önceki sürümde bu satırlar hiçbir yere yazılmıyordu, bu yüzden
+                # "234 hata" dışında hiçbir ayrıntı görünmüyordu.
+                print(f"[ffmpeg] {line.rstrip()}")
+                error_tail.append(line.rstrip())
 
             if "time=" in line:
                 time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
@@ -305,7 +319,12 @@ def start_m3u_stream():
             last_seconds = 0
             update_local_state(current_index, 0)
         else:
+            # DEĞİŞİKLİK 2: hata anında son ffmpeg satırlarını özetle göster.
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
+            print("--- Son FFmpeg çıktısı (hata teşhisi için) ---")
+            for l in error_tail:
+                print(l)
+            print("-----------------------------------------------")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
             last_seconds = current_stream_seconds
             update_local_state(current_index, last_seconds)
