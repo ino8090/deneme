@@ -169,7 +169,6 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # -ss parametresinin HLS çökmelerini engellemesi için input önüne ve arkasına hassas konumlandırılması
         ss_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
         if ";" in target_stream_url:
