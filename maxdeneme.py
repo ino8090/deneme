@@ -169,6 +169,9 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
+        # -ss parametresinin HLS çökmelerini engellemesi için input önüne ve arkasına hassas konumlandırılması
+        ss_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
+
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -179,14 +182,12 @@ def start_m3u_stream():
 
             input_args = [
                 '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-ss', str(last_seconds),
-                '-re',
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5'
+            ] + ss_args + [
                 '-i', video_url,
                 '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-ss', str(last_seconds),
-                '-re',
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5'
+            ] + ss_args + [
                 '-i', audio_url
             ]
             audio_map = ['-map', '1:a:0']
@@ -195,9 +196,8 @@ def start_m3u_stream():
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
                 '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-ss', str(last_seconds),
-                '-re',
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5'
+            ] + ss_args + [
                 '-i', target_stream_url
             ]
             audio_map = ['-map', '0:a?']
@@ -216,14 +216,13 @@ def start_m3u_stream():
         logo_alpha = "0.8"
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-        # Hatasız, kenarlıksız drawtext filtresi
         if os.path.exists(font_path):
-            drawtext_filter = (
+            drawtext_str = (
                 f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
                 f"fontcolor={text_color}"
             )
         else:
-            drawtext_filter = (
+            drawtext_str = (
                 f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
                 f"fontcolor={text_color}"
             )
@@ -232,17 +231,17 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo_input_index}:v]scale=-2:60,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30,setpts=PTS-STARTPTS[main];'
+                f'[{logo_input_index}:v]scale=-2:60,format=rgba,colorchannelmixer=aa={logo_alpha},setpts=PTS-STARTPTS[logo];'
                 '[main][logo]overlay=main_w-overlay_w-83:83[tmp];'
-                f'[tmp]{drawtext_filter}[v]'
+                f'[tmp]{drawtext_str}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(oh-ih)/2:black,fps=30[tmp];'
-                f'[tmp]{drawtext_filter}[v]'
+                'pad=1920:1080:(oh-ih)/2:black,fps=30,setpts=PTS-STARTPTS[tmp];'
+                f'[tmp]{drawtext_str}[v]'
             )
 
         command = [
