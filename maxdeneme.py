@@ -8,7 +8,6 @@ import os
 import re
 import json
 import requests
-from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
@@ -101,14 +100,10 @@ def download_logo():
     headers = {'User-Agent': STREAM_USER_AGENT}
     try:
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
-        print(f"ℹ️ Logo isteği durum kodu: {response.status_code}, boyut: {len(response.content)} byte")
         if response.status_code == 200 and len(response.content) > 0:
             with open('logo.png', 'wb') as f:
                 f.write(response.content)
-            saved_size = os.path.getsize('logo.png')
-            print(f"✅ Logo başarıyla indirildi ve kaydedildi. Dosya boyutu: {saved_size} byte, Yol: {os.path.abspath('logo.png')}")
-        else:
-            print(f"⚠️ Logo indirilemedi. Beklenmeyen durum kodu ya da boş içerik (status={response.status_code}).")
+            print("✅ Logo başarıyla indirildi.")
     except Exception as e:
         print(f"⚠️ Logo indirme hatası: {e}")
 
@@ -173,14 +168,7 @@ def start_m3u_stream():
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
-        ss_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
-        has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
-        print(f"ℹ️ Logo durumu kontrolü => Dosya var mı: {os.path.exists('logo.png')}, has_logo: {has_logo}")
-
-        logo_input_args = ['-i', 'logo.png'] if has_logo else []
-
-        # --- GİRDİ VE İNDEKS MANTIĞI (Logo Her Zaman Index 0 Yapıldı) ---
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -189,81 +177,78 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
-            stream_input_args = ss_args + [
+            input_args = [
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-i', video_url
-            ] + ss_args + [
+                '-ss', str(last_seconds),
+                '-re',
+                '-i', video_url,
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-ss', str(last_seconds),
+                '-re',
                 '-i', audio_url
             ]
-            
-            if has_logo:
-                video_in = "[1:v]"
-                logo_in = "[0:v]"
-                audio_map = ['-map', '2:a:0']
-            else:
-                video_in = "[0:v]"
-                logo_in = None
-                audio_map = ['-map', '1:a:0']
+            audio_map = ['-map', '1:a:0']
+            logo_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            stream_input_args = ss_args + [
+            input_args = [
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-ss', str(last_seconds),
+                '-re',
                 '-i', target_stream_url
             ]
-
-            if has_logo:
-                video_in = "[1:v]"
-                logo_in = "[0:v]"
-                audio_map = ['-map', '1:a?']
-            else:
-                video_in = "[0:v]"
-                logo_in = None
-                audio_map = ['-map', '0:a?']
+            audio_map = ['-map', '0:a?']
+            logo_input_index = 1
 
         print("=" * 60)
 
         print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
         write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
+        has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI VE LOGO STİL AYARLARI ---
         text_color = "white@0.8"
+        logo_alpha = "0.8"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
+        
+        # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
         if os.path.exists(font_path):
-            drawtext_str = (
+            drawtext_filter = (
                 f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}"
+                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
             )
         else:
-            drawtext_str = (
+            drawtext_filter = (
                 f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}"
+                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
             )
 
         if has_logo:
+            logo_inputs = ['-i', 'logo.png']
             filter_str = (
-                f'{video_in}scale=1920:1080:force_original_aspect_ratio=decrease,'
-                f'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'{logo_in}scale=-1:85,format=rgba[logo];'
-                f'[main][logo]overlay=main_w-overlay_w-70:70[tmp];'
-                f'[tmp]{drawtext_str}[v]'
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                f'[{logo_input_index}:v]scale=-2:60,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
+                '[main][logo]overlay=main_w-overlay_w-85:85[tmp];'
+                f'[tmp]{drawtext_filter}'
             )
         else:
+            logo_inputs = []
             filter_str = (
-                f'{video_in}scale=1920:1080:force_original_aspect_ratio=decrease,'
-                f'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[tmp];'
-                f'[tmp]{drawtext_str}[v]'
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                'pad=1920:1080:(oh-ih)/2:black,fps=30[tmp];'
+                f'[tmp]{drawtext_filter}'
             )
 
         command = [
             'ffmpeg'
-        ] + logo_input_args + stream_input_args + [
+        ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
@@ -283,9 +268,6 @@ def start_m3u_stream():
         ]
 
         print("▶ FFmpeg başlatıldı, 1080p 30fps @ 2000k yayın iletiliyor...")
-        print("--- FFmpeg komutu ---")
-        print(" ".join(command))
-        print("---------------------")
 
         process = subprocess.Popen(
             command,
@@ -297,16 +279,10 @@ def start_m3u_stream():
         last_dashboard_time = time.time()
         current_stream_seconds = last_seconds
 
-        error_tail = deque(maxlen=40)
-
         while True:
             line = process.stderr.readline()
             if not line and process.poll() is not None:
                 break
-
-            if line:
-                print(f"[ffmpeg] {line.rstrip()}")
-                error_tail.append(line.rstrip())
 
             if "time=" in line:
                 time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
@@ -334,10 +310,6 @@ def start_m3u_stream():
             update_local_state(current_index, 0)
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
-            print("--- Son FFmpeg çıktısı (hata teşhisi için) ---")
-            for l in error_tail:
-                print(l)
-            print("-----------------------------------------------")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
             last_seconds = current_stream_seconds
             update_local_state(current_index, last_seconds)
