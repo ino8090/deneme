@@ -15,7 +15,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "fixtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788217397352.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788284700953.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -212,11 +212,11 @@ def start_m3u_stream():
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI RENK SEÇİMİ ---
-        text_color = "white"
+        text_color = "white@0.8"
 
         # Film adı sol alt köşede, arka plansız ve 2px siyah dış çizgi ile
         drawtext_filter = (
-            f"drawtext=text='{safe_title}':x=80:y=h-80:fontsize=28:"
+            f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
             f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
         )
 
