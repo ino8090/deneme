@@ -250,8 +250,8 @@ def start_m3u_stream():
             filter_str = (
                 f'{video_in}scale=1920:1080:force_original_aspect_ratio=decrease,'
                 f'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'{logo_in}scale=-1:80,format=rgba[logo];'
-                f'[main][logo]overlay=main_w-overlay_w-50:50[tmp];'
+                f'{logo_in}scale=-1:85,format=rgba[logo];'
+                f'[main][logo]overlay=main_w-overlay_w-60:60[tmp];'
                 f'[tmp]{drawtext_str}[v]'
             )
         else:
