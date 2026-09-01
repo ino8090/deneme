@@ -15,7 +15,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "fixtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788285968483.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788284700953.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -212,21 +212,20 @@ def start_m3u_stream():
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI VE LOGO STİL AYARLARI ---
-        text_color = "white@0.7"
-        logo_alpha = "0.8"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
-        
-        # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
+        text_color = "white@0.8"
+        logo_alpha = "0.8"
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
+        # TEMİZ YAZI (Siyah kenarlık kaldırıldı):
         if os.path.exists(font_path):
             drawtext_filter = (
                 f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
+                f"fontcolor={text_color}[v]"
             )
         else:
             drawtext_filter = (
                 f"drawtext=text='{safe_title}':x=90:y=h-80:fontsize=28:"
-                f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
+                f"fontcolor={text_color}[v]"
             )
 
         if has_logo:
@@ -234,8 +233,8 @@ def start_m3u_stream():
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo_input_index}:v]scale=-2:80,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
-                '[main][logo]overlay=main_w-overlay_w-90:90[tmp];'
+                f'[{logo_input_index}:v]scale=-2:55,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
+                '[main][logo]overlay=main_w-overlay_w-79:79[tmp];'
                 f'[tmp]{drawtext_filter}'
             )
         else:
