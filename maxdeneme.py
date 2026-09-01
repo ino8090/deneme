@@ -212,7 +212,7 @@ def start_m3u_stream():
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI VE LOGO STİL AYARLARI ---
-        text_color = "white@0.8"
+        text_color = "white@0.7"
         logo_alpha = "0.8"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
         
         # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
@@ -234,8 +234,8 @@ def start_m3u_stream():
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo_input_index}:v]scale=-2:55,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
-                '[main][logo]overlay=main_w-overlay_w-79:79[tmp];'
+                f'[{logo_input_index}:v]scale=-2:80,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
+                '[main][logo]overlay=main_w-overlay_w-90:90[tmp];'
                 f'[tmp]{drawtext_filter}'
             )
         else:
