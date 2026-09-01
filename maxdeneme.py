@@ -211,13 +211,13 @@ def start_m3u_stream():
         has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
-        # --- YAZI SEÇENEKLERİ ---
+        # --- YAZI VE LOGO STİL AYARLARI ---
         text_color = "white@0.8"
+        logo_alpha = "0.8"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
         
         # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-        # Font parametresi eklendi, pozisyon (x=90:y=h-80) ve stil korundu
         if os.path.exists(font_path):
             drawtext_filter = (
                 f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
@@ -234,7 +234,7 @@ def start_m3u_stream():
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo_input_index}:v]scale=-2:55[logo];'
+                f'[{logo_input_index}:v]scale=-2:55,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
                 '[main][logo]overlay=main_w-overlay_w-79:79[tmp];'
                 f'[tmp]{drawtext_filter}'
             )
