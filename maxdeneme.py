@@ -17,7 +17,7 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788217397352.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_maxanimasyon.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -44,7 +44,7 @@ def sanitize_text_for_ffmpeg(text):
 
 
 def get_local_state():
-    """Yerel state_maxanimasyon.json dosyasından son durumu okur."""
+    """Yerel state_fixtv.json dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
@@ -61,7 +61,7 @@ def get_local_state():
 
 
 def update_local_state(index, seconds):
-    """Son konumu yerel state_maxanimasyon.json dosyasına kaydeder."""
+    """Son konumu yerel state_fixtv.json dosyasına kaydeder."""
     try:
         data = {"last_index": int(index), "last_seconds": int(seconds)}
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
@@ -122,7 +122,7 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
         return
     try:
         content = (
-            "## 📺 Canlı Yayın Durumu (Maxanimasyon)\n\n"
+            "## 📺 Canlı Yayın Durumu (FixTV)\n\n"
             "| Alan | Değer |\n"
             "|---|---|\n"
             f"| 🎬 Şu an oynayan içerik | {title} |\n"
@@ -162,7 +162,7 @@ def start_m3u_stream():
         film_title = current_item["title"]
 
         print("=" * 60)
-        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 30fps - 2000k) Başlatılıyor")
+        print("📺 FixTV Canlı Aktarım Yayını (1080p 30fps - 2000k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
@@ -212,11 +212,9 @@ def start_m3u_stream():
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
         # --- YAZI RENK SEÇİMİ ---
-        # İster renk ismi (yellow, white, cyan vb.) ister HEX kodu (0xFFD700 vb.) kullanabilirsin.
         text_color = "yellow"
 
-        # Arka plan kutusu (box) kaldırıldı.
-        # Okunabilirlik için 2px siyah dış çizgi (borderw=2:bordercolor=black) eklendi.
+        # Film adı sol alt köşede, arka plansız ve 2px siyah dış çizgi ile
         drawtext_filter = (
             f"drawtext=text='{safe_title}':x=50:y=h-80:fontsize=28:"
             f"fontcolor={text_color}:borderw=2:bordercolor=black[v]"
