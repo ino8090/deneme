@@ -236,19 +236,19 @@ def start_m3u_stream():
 
         # --- YAZI VE LOGO STİL AYARLARI ---
         text_color = "white@0.6"
-        logo_alpha = "0.7"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
+        logo_alpha = "0.6"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
 
         # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
         if os.path.exists(font_path):
             drawtext_filter = (
-                f"drawtext=fontfile='{font_path}':text='{safe_title}':x=90:y=h-80:fontsize=28:"
+                f"drawtext=fontfile='{font_path}':text='{safe_title}':x=99:y=h-90:fontsize=35:"
                 f"fontcolor={text_color}[v]"
             )
         else:
             drawtext_filter = (
-                f"drawtext=text='{safe_title}':x=105:y=h-93:fontsize=29:"
+                f"drawtext=text='{safe_title}':x=99:y=h-90:fontsize=35:"
                 f"fontcolor={text_color}[v]"
             )
 
