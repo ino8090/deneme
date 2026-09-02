@@ -21,6 +21,17 @@ LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
+# Yaş sınırı (rating) ikonları: m3u'daki tvg-rating değeri ile eşleşen görsel URL'leri.
+# Kendi ikonlarını hazırlayıp GitHub'a yükledikten sonra bu linkleri güncelle,
+# ya da GitHub Actions'ta env olarak RATING_ICON_7 / RATING_ICON_13 vb. tanımla.
+RATING_ICON_URLS = {
+    "+7":  os.getenv("RATING_ICON_7",  "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_7.png"),
+    "+13": os.getenv("RATING_ICON_13", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_13.png"),
+    "+16": os.getenv("RATING_ICON_16", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_16.png"),
+    "+18": os.getenv("RATING_ICON_18", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_18.png"),
+}
+RATING_ICON_DIR = "rating_icons"
+
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Sinyal yakalayıcının kullanacağı anlık konum bilgisi (global)
@@ -96,6 +107,7 @@ def get_m3u_playlist(m3u_url):
             lines = response.text.splitlines()
             playlist = []
             pending_title = None
+            pending_rating = None
             for raw_line in lines:
                 line = raw_line.strip()
                 if not line:
@@ -103,10 +115,13 @@ def get_m3u_playlist(m3u_url):
                 if line.startswith('#EXTINF'):
                     match = re.search(r',(.+)$', line)
                     pending_title = match.group(1).strip() if match else None
+                    rating_match = re.search(r'tvg-rating="([^"]*)"', line)
+                    pending_rating = rating_match.group(1).strip() if rating_match else None
                 elif not line.startswith('#') and line.startswith('http'):
                     title = pending_title or os.path.basename(line.split('?')[0])
-                    playlist.append({"url": line, "title": title})
+                    playlist.append({"url": line, "title": title, "rating": pending_rating})
                     pending_title = None
+                    pending_rating = None
             return playlist
     except Exception as e:
         print(f"⚠️ M3U çekme hatası: {e}")
@@ -123,6 +138,36 @@ def download_logo():
             print("✅ Logo başarıyla indirildi.")
     except Exception as e:
         print(f"⚠️ Logo indirme hatası: {e}")
+
+
+def download_rating_icons():
+    """Her yaş sınırı ikonunu bir kez indirir (rating_icons/ klasörüne)."""
+    os.makedirs(RATING_ICON_DIR, exist_ok=True)
+    headers = {'User-Agent': STREAM_USER_AGENT}
+    for rating, url in RATING_ICON_URLS.items():
+        filename = os.path.join(RATING_ICON_DIR, f"{rating.replace('+', '')}.png")
+        if os.path.exists(filename) and os.path.getsize(filename) > 0:
+            continue
+        try:
+            response = requests.get(url, headers=headers, timeout=15)
+            if response.status_code == 200 and len(response.content) > 0:
+                with open(filename, 'wb') as f:
+                    f.write(response.content)
+                print(f"✅ {rating} ikonu indirildi.")
+            else:
+                print(f"⚠️ {rating} ikonu indirilemedi (HTTP {response.status_code}).")
+        except Exception as e:
+            print(f"⚠️ {rating} ikonu indirme hatası: {e}")
+
+
+def get_rating_icon_path(rating):
+    """Verilen rating değeri için lokal ikon dosya yolunu döndürür (yoksa None)."""
+    if not rating:
+        return None
+    filename = os.path.join(RATING_ICON_DIR, f"{rating.replace('+', '')}.png")
+    if os.path.exists(filename) and os.path.getsize(filename) > 0:
+        return filename
+    return None
 
 
 def print_dashboard(title, index, playlist_len, seconds, status="🟢 Yayında"):
@@ -163,6 +208,7 @@ def start_m3u_stream():
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
 
     download_logo()
+    download_rating_icons()
 
     current_index, last_seconds = get_local_state()
     _current_index, _current_seconds = current_index, last_seconds
@@ -213,7 +259,7 @@ def start_m3u_stream():
                 '-i', audio_url
             ]
             audio_map = ['-map', '1:a:0']
-            logo_input_index = 2
+            base_input_count = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
@@ -223,8 +269,8 @@ def start_m3u_stream():
                 '-re',
                 '-i', target_stream_url
             ]
-            audio_map = ['-map', '0:a?']
-            logo_input_index = 1
+            audio_map = ['-map', '0:a:0?']
+            base_input_count = 1
 
         print("=" * 60)
 
@@ -232,11 +278,24 @@ def start_m3u_stream():
         write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
         has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
+
+        film_rating = current_item.get("rating")
+        rating_icon_path = get_rating_icon_path(film_rating)
+        has_rating_icon = rating_icon_path is not None
+        if film_rating and not has_rating_icon:
+            print(f"⚠️ '{film_rating}' için ikon bulunamadı, rozet gösterilmeyecek.")
+        elif has_rating_icon:
+            print(f"🔞 Yaş sınırı rozeti uygulanıyor: {film_rating}")
+
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
-        # --- YAZI VE LOGO STİL AYARLARI ---
+        # --- YAZI, LOGO VE ROZET STİL AYARLARI ---
         text_color = "white@0.5"
-        logo_alpha = "0.5"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
+        logo_alpha = "0.5"          # <--- LOGO OPAKLIĞI (0.0 - 1.0 arası)
+        rating_icon_alpha = "1.0"   # <--- ROZET OPAKLIĞI (0.0 - 1.0 arası, 1.0 = tam opak)
+        rating_icon_height = 90     # <--- YAŞ SINIRI ROZETİNİN YÜKSEKLİĞİ (piksel)
+        rating_icon_x = 40          # <--- ROZETİN SOLDAN UZAKLIĞI
+        rating_icon_y = 40          # <--- ROZETİN YUKARIDAN UZAKLIĞI
 
         # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -252,22 +311,48 @@ def start_m3u_stream():
                 f"fontcolor={text_color}[v]"
             )
 
+        # Ekstra girişleri (logo, yaş sınırı rozeti) sırayla ekle ve index'lerini hesapla
+        extra_inputs = []
+        next_index = base_input_count
+        logo_input_index = None
+        rating_input_index = None
+
         if has_logo:
-            logo_inputs = ['-i', 'logo.png']
-            filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo_input_index}:v]scale=-2:99,format=rgba,colorchannelmixer=aa={logo_alpha}[logo];'
-                '[main][logo]overlay=main_w-overlay_w-121:110[tmp];'
-                f'[tmp]{drawtext_filter}'
+            extra_inputs += ['-i', 'logo.png']
+            logo_input_index = next_index
+            next_index += 1
+
+        if has_rating_icon:
+            extra_inputs += ['-i', rating_icon_path]
+            rating_input_index = next_index
+            next_index += 1
+
+        filters = [
+            '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main]'
+        ]
+        last_label = 'main'
+
+        if has_logo:
+            filters.append(
+                f'[{logo_input_index}:v]scale=-2:99,format=rgba,colorchannelmixer=aa={logo_alpha}[logo]'
             )
-        else:
-            logo_inputs = []
-            filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(oh-ih)/2:black,fps=30[tmp];'
-                f'[tmp]{drawtext_filter}'
+            filters.append(f'[{last_label}][logo]overlay=main_w-overlay_w-121:110[afterlogo]')
+            last_label = 'afterlogo'
+
+        if has_rating_icon:
+            filters.append(
+                f'[{rating_input_index}:v]scale=-2:{rating_icon_height},format=rgba,'
+                f'colorchannelmixer=aa={rating_icon_alpha}[ratingicon]'
             )
+            filters.append(
+                f'[{last_label}][ratingicon]overlay={rating_icon_x}:{rating_icon_y}[afterrating]'
+            )
+            last_label = 'afterrating'
+
+        filters.append(f'[{last_label}]{drawtext_filter}')
+        filter_str = ';'.join(filters)
+        logo_inputs = extra_inputs
 
         command = [
             'ffmpeg'
