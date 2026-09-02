@@ -21,9 +21,7 @@ LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
-# Yaş sınırı (rating) ikonları: m3u'daki tvg-rating değeri ile eşleşen görsel URL'leri.
-# Kendi ikonlarını hazırlayıp GitHub'a yükledikten sonra bu linkleri güncelle,
-# ya da GitHub Actions'ta env olarak RATING_ICON_7 / RATING_ICON_13 vb. tanımla.
+# Yaş sınırı (rating) ikonları
 RATING_ICON_URLS = {
     "+7":  os.getenv("RATING_ICON_7",  "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_7.png"),
     "+13": os.getenv("RATING_ICON_13", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_13.png"),
@@ -34,9 +32,10 @@ RATING_ICON_DIR = "rating_icons"
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-# Sinyal yakalayıcının kullanacağı anlık konum bilgisi (global)
+# Sinyal yakalayıcının kullanacağı anlık konum ve içerik bilgileri (global)
 _current_index = 0
 _current_seconds = 0
+_current_url = ""
 
 
 def format_hms(total_seconds):
@@ -67,22 +66,27 @@ def get_local_state():
                 data = json.load(f)
                 idx = data.get("last_index", 0)
                 sec = data.get("last_seconds", 0)
-                print(f"✅ Yerel state okundu ({STATE_FILE_NAME}) => İndeks: {idx}, Saniye: {sec}")
-                return idx, sec
+                url = data.get("last_url", "")
+                print(f"✅ Yerel state okundu ({STATE_FILE_NAME}) => İndeks: {idx}, Saniye: {sec}, URL: {url[:30]}...")
+                return idx, sec, url
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
     else:
         print(f"ℹ️ Yerel state dosyası bulunamadı, 0'dan başlanıyor.")
-    return 0, 0
+    return 0, 0, ""
 
 
-def update_local_state(index, seconds):
-    """Son konumu yerel state_fixtv.json dosyasına kaydeder."""
+def update_local_state(index, seconds, url=""):
+    """Son konumu ve oynatılan film URL'sini yerel state_fixtv.json dosyasına kaydeder."""
     try:
-        data = {"last_index": int(index), "last_seconds": int(seconds)}
+        data = {
+            "last_index": int(index),
+            "last_seconds": int(seconds),
+            "last_url": url
+        }
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"💾 Konum yerel dosyaya kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
+        print(f"💾 Konum kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
     except Exception as e:
         print(f"⚠️ Yerel state yazma hatası: {e}")
 
@@ -91,7 +95,7 @@ def handle_exit(signum, frame):
     """Workflow iptal edildiğinde (SIGINT/SIGTERM) anlık konumu acilen kaydeder."""
     print(f"\n⚠️ İptal/sonlandırma sinyali alındı ({signum}). "
           f"Son konum kaydediliyor => İndeks: {_current_index}, Saniye: {int(_current_seconds)}")
-    update_local_state(_current_index, _current_seconds)
+    update_local_state(_current_index, _current_seconds, _current_url)
     sys.exit(0)
 
 
@@ -200,7 +204,7 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
 
 
 def start_m3u_stream():
-    global _current_index, _current_seconds
+    global _current_index, _current_seconds, _current_url
 
     print(f"🔧 Kullanılan M3U   : {M3U_URL}")
     print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
@@ -210,8 +214,7 @@ def start_m3u_stream():
     download_logo()
     download_rating_icons()
 
-    current_index, last_seconds = get_local_state()
-    _current_index, _current_seconds = current_index, last_seconds
+    current_index, last_seconds, last_url = get_local_state()
 
     while True:
         playlist = get_m3u_playlist(M3U_URL)
@@ -222,13 +225,28 @@ def start_m3u_stream():
         if current_index >= len(playlist):
             current_index = 0
             last_seconds = 0
-
-        _current_index = current_index
-        _current_seconds = last_seconds
+            last_url = ""
 
         current_item = playlist[current_index]
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
+
+        # =========================================================================
+        # 🔍 KRİTİK KONTROL: Oynatılacak film ile son kaydedilen film aynı mı?
+        # =========================================================================
+        if last_url and target_stream_url != last_url:
+            print("\n🔄 [UYARI] M3U listesi değişmiş veya farklı bir filme geçilmiş!")
+            print(f"   Eski URL : {last_url[:50]}...")
+            print(f"   Yeni URL : {target_stream_url[:50]}...")
+            print("   => Film değiştiği için zamanlama sıfırlanıyor (0. saniyeden başlanacak).\n")
+            last_seconds = 0
+
+        # Güncel film URL'sini hafızadaki last_url ile senkronize et
+        last_url = target_stream_url
+
+        _current_index = current_index
+        _current_seconds = last_seconds
+        _current_url = target_stream_url
 
         print("=" * 60)
         print("📺 FixTV Canlı Aktarım Yayını (1080p 25fps - 2000k) Başlatılıyor")
@@ -291,13 +309,12 @@ def start_m3u_stream():
 
         # --- YAZI, LOGO VE ROZET STİL AYARLARI ---
         text_color = "white@0.5"
-        logo_alpha = "0.5"          # <--- LOGO OPAKLIĞI (0.0 - 1.0 arası)
-        rating_icon_alpha = "1.0"   # <--- ROZET OPAKLIĞI (0.0 - 1.0 arası, 1.0 = tam opak)
-        rating_icon_height = 90     # <--- YAŞ SINIRI ROZETİNİN YÜKSEKLİĞİ (piksel)
-        rating_icon_x = 40          # <--- ROZETİN SOLDAN UZAKLIĞI
-        rating_icon_y = 40          # <--- ROZETİN YUKARIDAN UZAKLIĞI
+        logo_alpha = "0.5"
+        rating_icon_alpha = "1.0"
+        rating_icon_height = 90
+        rating_icon_x = 40
+        rating_icon_y = 40
 
-        # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
         if os.path.exists(font_path):
@@ -311,7 +328,6 @@ def start_m3u_stream():
                 f"fontcolor={text_color}[v]"
             )
 
-        # Ekstra girişleri (logo, yaş sınırı rozeti) sırayla ekle ve index'lerini hesapla
         extra_inputs = []
         next_index = base_input_count
         logo_input_index = None
@@ -329,7 +345,7 @@ def start_m3u_stream():
 
         filters = [
             '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
+            'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=25[main]'
         ]
         last_label = 'main'
 
@@ -387,7 +403,7 @@ def start_m3u_stream():
         last_dashboard_time = time.time()
         current_stream_seconds = last_seconds
 
-        stderr_tail = []  # Hata anında göstermek için son satırları biriktirir
+        stderr_tail = []
 
         while True:
             line = process.stderr.readline()
@@ -406,15 +422,14 @@ def start_m3u_stream():
                     played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
                     current_stream_seconds = last_seconds + played_seconds
 
-                    # Sinyal yakalayıcının kullanacağı anlık konumu güncelle
                     _current_index = current_index
                     _current_seconds = current_stream_seconds
+                    _current_url = target_stream_url
 
                     now = time.time()
 
-                    # Kaydetme sıklığı 30 sn'den 3 sn'ye düşürüldü
                     if now - last_save_time > 3:
-                        update_local_state(current_index, current_stream_seconds)
+                        update_local_state(current_index, current_stream_seconds, target_stream_url)
                         last_save_time = now
 
                     if now - last_dashboard_time > 30:
@@ -427,9 +442,11 @@ def start_m3u_stream():
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
             current_index += 1
             last_seconds = 0
+            last_url = ""
             _current_index = current_index
             _current_seconds = 0
-            update_local_state(current_index, 0)
+            _current_url = ""
+            update_local_state(current_index, 0, "")
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
             print("----- FFmpeg son çıktısı (debug) -----")
@@ -439,7 +456,8 @@ def start_m3u_stream():
             last_seconds = current_stream_seconds
             _current_index = current_index
             _current_seconds = last_seconds
-            update_local_state(current_index, last_seconds)
+            _current_url = target_stream_url
+            update_local_state(current_index, last_seconds, target_stream_url)
 
         print("⚠️ 5 saniye sonra tekrar bağlanılıyor...")
         time.sleep(5)
