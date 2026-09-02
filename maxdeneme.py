@@ -337,7 +337,7 @@ def start_m3u_stream():
             filters.append(
                 f'[{logo_input_index}:v]scale=-2:102,format=rgba,colorchannelmixer=aa={logo_alpha}[logo]'
             )
-            filters.append(f'[{last_label}][logo]overlay=main_w-overlay_w-129:97[afterlogo]')
+            filters.append(f'[{last_label}][logo]overlay=main_w-overlay_w-129:90[afterlogo]')
             last_label = 'afterlogo'
 
         if has_rating_icon:
