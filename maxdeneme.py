@@ -231,7 +231,7 @@ def start_m3u_stream():
         film_title = current_item["title"]
 
         print("=" * 60)
-        print("📺 FixTV Canlı Aktarım Yayını (1080p 30fps - 6000k) Başlatılıyor")
+        print("📺 FixTV Canlı Aktarım Yayını (1080p 25fps - 2000k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
@@ -329,7 +329,7 @@ def start_m3u_stream():
 
         filters = [
             '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main]'
+            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
         ]
         last_label = 'main'
 
@@ -363,10 +363,10 @@ def start_m3u_stream():
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
-            '-r', '30',
-            '-b:v', '6000k',
-            '-maxrate', '6000k',
-            '-bufsize', '12000k',
+            '-r', '25',
+            '-b:v', '2000k',
+            '-maxrate', '2000k',
+            '-bufsize', '4000k',
             '-g', '60',
             '-c:a', 'aac',
             '-b:a', '128k',
@@ -375,7 +375,7 @@ def start_m3u_stream():
             RTMP_SERVER
         ]
 
-        print("▶ FFmpeg başlatıldı, 1080p 30fps @ 6000k yayın iletiliyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2000k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
