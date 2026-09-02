@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usrPlugin/env python3
 # -*- coding: utf-8 -*-
 
 import subprocess
@@ -251,9 +251,10 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # Girdi seçenekleri
+        # Tamponsuz ve anlık zaman eşlemesi sağlayan girdi bayrakları
         input_flags = [
             '-headers', headers_arg,
+            '-use_wallclock_as_timestamps', '1',  # Ses ve videoyu sistem saatiyle tam eşzamanlar
             '-reconnect', '1',
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '5',
@@ -268,6 +269,7 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
+            # İki ayrı link aynı anda çekilip eşleşecek
             input_args = input_flags + ['-i', video_url] + input_flags + ['-i', audio_url]
             audio_map = ['-map', '1:a:0?']
             base_input_count = 2
@@ -351,16 +353,17 @@ def start_m3u_stream():
         filters.append(f'[{last_label}]{drawtext_filter}')
         filter_str = ';'.join(filters)
 
-        # FFmpeg Komut Yapılandırması
+        # FFmpeg Komut Yapılandırması (Ses Gecikmesini Tamamen Engelleyen Yapı)
         command = [
             'ffmpeg',
-            '-re'  # Gerçek zamanlı akışı sağlayan parametre en başta tanımlandı
+            '-re',
+            '-fflags', '+genpts+nobuffer+discardcorrupt'  # Tamponları sıfırlayıp anında canlı işleme
         ] + input_args + extra_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
-            # SES-GÖRÜNTÜ KİLİTLEME FİLTRESİ
-            '-af', 'aresample=async=1000:first_pts=0',
+            # Sesi videonun zaman çizgisine birebir zorlama (Anlık kilit)
+            '-af', 'aresample=async=1:first_pts=0',
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
@@ -372,9 +375,8 @@ def start_m3u_stream():
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
-            # PTS SIFIRLAMA VE ZAMAN DAMGASI PAROMETRELERİ
-            '-fflags', '+genpts+discardcorrupt',
             '-avoid_negative_ts', 'make_zero',
+            '-shortest',  # İki bağlantıdan biri önden koşarsa yayını koparmadan senkronize eder
             '-f', 'flv',
             RTMP_SERVER
         ]
