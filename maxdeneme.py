@@ -16,7 +16,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "fixtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788285968483.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788318046234.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -236,7 +236,7 @@ def start_m3u_stream():
 
         # --- YAZI VE LOGO STİL AYARLARI ---
         text_color = "white@0.6"
-        logo_alpha = "0.9"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
+        logo_alpha = "0.7"  # <--- LOGO OPAKLIĞI BURADAN AYARLANIR (0.0 - 1.0 arası)
 
         # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
