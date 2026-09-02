@@ -32,10 +32,6 @@ RATING_ICON_URLS = {
 }
 RATING_ICON_DIR = "rating_icons"
 
-# Video;Ses şeklinde ayrı kaynaklı içeriklerde ses görüntüden geç/erken geliyorsa
-# bu değeri saniye cinsinden ayarla. Örn: ses 1.2 saniye geç geliyorsa -> 1.2
-AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "0"))
-
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Sinyal yakalayıcının kullanacağı anlık konum bilgisi (global)
@@ -254,10 +250,6 @@ def start_m3u_stream():
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-            ]
-            if AUDIO_SYNC_OFFSET > 0:
-                input_args += ['-itsoffset', str(AUDIO_SYNC_OFFSET)]
-            input_args += [
                 '-re',
                 '-i', video_url,
                 '-headers', headers_arg,
@@ -363,7 +355,7 @@ def start_m3u_stream():
         logo_inputs = extra_inputs
 
         command = [
-            'ffmpeg', '-copyts', '-start_at_zero'
+            'ffmpeg'
         ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
@@ -372,8 +364,8 @@ def start_m3u_stream():
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
-            '-b:v', '5000k',
-            '-maxrate', '5000k',
+            '-b:v', '2000k',
+            '-maxrate', '2000k',
             '-bufsize', '4000k',
             '-g', '60',
             '-c:a', 'aac',
