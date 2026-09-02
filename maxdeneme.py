@@ -165,7 +165,6 @@ def download_rating_icons():
 
 
 def get_rating_icon_path(rating):
-    """Verilen rating değeri için lokal ikon dosya yolunu döndürür (yoksa None)."""
     if not rating:
         return None
     filename = os.path.join(RATING_ICON_DIR, f"{rating.replace('+', '')}.png")
@@ -252,6 +251,15 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
+        # Girdi seçenekleri
+        input_flags = [
+            '-headers', headers_arg,
+            '-reconnect', '1',
+            '-reconnect_streamed', '1',
+            '-reconnect_delay_max', '5',
+            '-ss', str(last_seconds)
+        ]
+
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -260,26 +268,12 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
-            input_args = [
-                '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-ss', str(last_seconds),
-                '-i', video_url,
-                '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-ss', str(last_seconds),
-                '-i', audio_url
-            ]
+            input_args = input_flags + ['-i', video_url] + input_flags + ['-i', audio_url]
             audio_map = ['-map', '1:a:0?']
             base_input_count = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            input_args = [
-                '-headers', headers_arg,
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-ss', str(last_seconds),
-                '-i', target_stream_url
-            ]
+            input_args = input_flags + ['-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             base_input_count = 1
 
@@ -293,10 +287,6 @@ def start_m3u_stream():
         film_rating = current_item.get("rating")
         rating_icon_path = get_rating_icon_path(film_rating)
         has_rating_icon = rating_icon_path is not None
-        if film_rating and not has_rating_icon:
-            print(f"⚠️ '{film_rating}' için ikon bulunamadı, rozet gösterilmeyecek.")
-        elif has_rating_icon:
-            print(f"🔞 Yaş sınırı rozeti uygulanıyor: {film_rating}")
 
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
@@ -360,17 +350,17 @@ def start_m3u_stream():
 
         filters.append(f'[{last_label}]{drawtext_filter}')
         filter_str = ';'.join(filters)
-        logo_inputs = extra_inputs
 
-        # Senkronizasyon düzeltmeleri eklenmiş FFmpeg komutu
+        # FFmpeg Komut Yapılandırması
         command = [
             'ffmpeg',
-            '-re'  # Yayın hızını stabil tutmak için girişlerin önüne alındı
-        ] + input_args + logo_inputs + [
+            '-re'  # Gerçek zamanlı akışı sağlayan parametre en başta tanımlandı
+        ] + input_args + extra_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
-            '-af', 'aresample=async=1000',  # SES-GÖRÜNTÜ SENKRONİZASYON FİLTRESİ
+            # SES-GÖRÜNTÜ KİLİTLEME FİLTRESİ
+            '-af', 'aresample=async=1000:first_pts=0',
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
@@ -382,8 +372,9 @@ def start_m3u_stream():
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
-            '-async', '1',                # Sesi görüntü zamanlamasına kilitler
-            '-vsync', 'cfr',               # Sabit kare hızı (CFR) zorlar
+            # PTS SIFIRLAMA VE ZAMAN DAMGASI PAROMETRELERİ
+            '-fflags', '+genpts+discardcorrupt',
+            '-avoid_negative_ts', 'make_zero',
             '-f', 'flv',
             RTMP_SERVER
         ]
@@ -446,9 +437,6 @@ def start_m3u_stream():
             update_local_state(current_index, 0, "")
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
-            print("----- FFmpeg son çıktısı (debug) -----")
-            print("".join(stderr_tail))
-            print("---------------------------------------")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
             last_seconds = current_stream_seconds
             _current_index = current_index
