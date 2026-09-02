@@ -231,9 +231,6 @@ def start_m3u_stream():
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
-        # =========================================================================
-        # 🔍 KRİTİK KONTROL: Oynatılacak film ile son kaydedilen film aynı mı?
-        # =========================================================================
         if last_url and target_stream_url != last_url:
             print("\n🔄 [UYARI] M3U listesi değişmiş veya farklı bir filme geçilmiş!")
             print(f"   Eski URL : {last_url[:50]}...")
@@ -241,7 +238,6 @@ def start_m3u_stream():
             print("   => Film değiştiği için zamanlama sıfırlanıyor (0. saniyeden başlanacak).\n")
             last_seconds = 0
 
-        # Güncel film URL'sini hafızadaki last_url ile senkronize et
         last_url = target_stream_url
 
         _current_index = current_index
@@ -268,15 +264,13 @@ def start_m3u_stream():
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-                '-re',
                 '-i', video_url,
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-                '-re',
                 '-i', audio_url
             ]
-            audio_map = ['-map', '1:a:0']
+            audio_map = ['-map', '1:a:0?']
             base_input_count = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
@@ -284,7 +278,6 @@ def start_m3u_stream():
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-                '-re',
                 '-i', target_stream_url
             ]
             audio_map = ['-map', '0:a:0?']
@@ -307,7 +300,6 @@ def start_m3u_stream():
 
         safe_title = sanitize_text_for_ffmpeg(film_title)
 
-        # --- YAZI, LOGO VE ROZET STİL AYARLARI ---
         text_color = "white@0.5"
         logo_alpha = "0.5"
         rating_icon_alpha = "1.0"
@@ -345,7 +337,7 @@ def start_m3u_stream():
 
         filters = [
             '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-            'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=25[main]'
+            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
         ]
         last_label = 'main'
 
@@ -370,12 +362,15 @@ def start_m3u_stream():
         filter_str = ';'.join(filters)
         logo_inputs = extra_inputs
 
+        # Senkronizasyon düzeltmeleri eklenmiş FFmpeg komutu
         command = [
-            'ffmpeg'
+            'ffmpeg',
+            '-re'  # Yayın hızını stabil tutmak için girişlerin önüne alındı
         ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
+            '-af', 'aresample=async=1000',  # SES-GÖRÜNTÜ SENKRONİZASYON FİLTRESİ
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
@@ -383,10 +378,12 @@ def start_m3u_stream():
             '-b:v', '2000k',
             '-maxrate', '2000k',
             '-bufsize', '4000k',
-            '-g', '60',
+            '-g', '50',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
+            '-async', '1',                # Sesi görüntü zamanlamasına kilitler
+            '-vsync', 'cfr',               # Sabit kare hızı (CFR) zorlar
             '-f', 'flv',
             RTMP_SERVER
         ]
