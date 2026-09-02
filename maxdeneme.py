@@ -260,6 +260,7 @@ def start_m3u_stream():
             ]
             audio_map = ['-map', '1:a:0']
             base_input_count = 2
+            is_split_source = True
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
@@ -271,6 +272,7 @@ def start_m3u_stream():
             ]
             audio_map = ['-map', '0:a:0?']
             base_input_count = 1
+            is_split_source = False
 
         print("=" * 60)
 
@@ -328,7 +330,7 @@ def start_m3u_stream():
             next_index += 1
 
         filters = [
-            '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+            '[0:v]setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease,'
             'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
         ]
         last_label = 'main'
@@ -351,6 +353,11 @@ def start_m3u_stream():
             last_label = 'afterrating'
 
         filters.append(f'[{last_label}]{drawtext_filter}')
+
+        if is_split_source:
+            filters.append('[1:a]asetpts=PTS-STARTPTS[aout]')
+            audio_map = ['-map', '[aout]']
+
         filter_str = ';'.join(filters)
         logo_inputs = extra_inputs
 
