@@ -302,12 +302,12 @@ def start_m3u_stream():
 
         if os.path.exists(font_path):
             drawtext_filter = (
-                f"drawtext=fontfile='{font_path}':text='{safe_title}':x=103:y=h-94:fontsize=33:"
+                f"drawtext=fontfile='{font_path}':text='{safe_title}':x=100:y=h-91:fontsize=30:"
                 f"fontcolor={text_color}[v]"
             )
         else:
             drawtext_filter = (
-                f"drawtext=text='{safe_title}':x=103:y=h-94:fontsize=33:"
+                f"drawtext=text='{safe_title}':x=100:y=h-91:fontsize=30:"
                 f"fontcolor={text_color}[v]"
             )
 
