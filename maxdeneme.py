@@ -21,9 +21,7 @@ LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
-# Yaş sınırı (rating) ikonları: m3u'daki tvg-rating değeri ile eşleşen görsel URL'leri.
-# Kendi ikonlarını hazırlayıp GitHub'a yükledikten sonra bu linkleri güncelle,
-# ya da GitHub Actions'ta env olarak RATING_ICON_7 / RATING_ICON_13 vb. tanımla.
+# Yaş sınırı (rating) ikonları
 RATING_ICON_URLS = {
     "+7":  os.getenv("RATING_ICON_7",  "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_7.png"),
     "+13": os.getenv("RATING_ICON_13", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_13.png"),
@@ -32,15 +30,12 @@ RATING_ICON_URLS = {
 }
 RATING_ICON_DIR = "rating_icons"
 
-# Video;Ses şeklinde ayrı kaynaklı içeriklerde SABİT bir kayma varsa (örn. ses
-# hep videodan belli bir süre sonra geliyorsa) burada saniye cinsinden ayarla.
-# Ses videodan SONRA geliyorsa -> pozitif değer gir (örn. "0.4") -> video geciktirilir, sesle hizalanır.
-# Ses videodan ÖNCE geliyorsa -> negatif değer gir (örn. "-0.4") -> ses geciktirilir, videoyla hizalanır.
-AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "3.5"))
+# Ses / Video Senkronizasyon Ayarı (Saniye) -- senin için işe yarayan değer: 1.0
+AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.0"))
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-# Sinyal yakalayıcının kullanacağı anlık konum bilgisi (global)
+# Anlık durum takibi için global değişkenler
 _current_index = 0
 _current_seconds = 0
 
@@ -55,18 +50,20 @@ def format_hms(total_seconds):
 
 
 def sanitize_text_for_ffmpeg(text):
-    """FFmpeg drawtext filtresinde hata vermemesi için özel karakterleri kaçırır."""
+    """FFmpeg drawtext filtresinde özel karakterlerin kaçırılmasını sağlar."""
     if not text:
         return ""
     text = text.replace('\\', '\\\\')
     text = text.replace("'", "'\\\\''")
     text = text.replace(':', '\\:')
     text = text.replace('%', '\\%')
+    text = text.replace('[', '\\[')
+    text = text.replace(']', '\\]')
     return text
 
 
 def get_local_state():
-    """Yerel state_fixtv.json dosyasından son durumu okur."""
+    """Yerel state dosyasından son kayıtlı durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
@@ -83,66 +80,23 @@ def get_local_state():
 
 
 def update_local_state(index, seconds):
-    """Son konumu yerel state_fixtv.json dosyasına kaydeder."""
+    """Son konumu yerel dosyaya güvenli bir şekilde yazar."""
     try:
         data = {"last_index": int(index), "last_seconds": int(seconds)}
-        with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
+        temp_file = f"{STATE_FILE_NAME}.tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(temp_file, STATE_FILE_NAME)
         print(f"💾 Konum yerel dosyaya kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
     except Exception as e:
         print(f"⚠️ Yerel state yazma hatası: {e}")
 
 
-def upload_state_to_release():
-    """State dosyasını doğrudan GitHub API ile release'e yükler.
-    Ayrı bir workflow adımına bağımlı kalmadan, cancel anında bile çalışır."""
-    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-    repo = os.getenv("GITHUB_REPOSITORY")  # GitHub Actions bunu otomatik sağlar
-    if not token or not repo:
-        return
-    tag = "state-data"
-    try:
-        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
-        r = requests.get(f"https://api.github.com/repos/{repo}/releases/tags/{tag}", headers=headers, timeout=10)
-        if r.status_code != 200:
-            print(f"⚠️ Release bulunamadı (HTTP {r.status_code}), state API ile yüklenemedi.")
-            return
-        data = r.json()
-        release_id = data["id"]
-        asset_name = os.path.basename(STATE_FILE_NAME)
-
-        # Aynı isimde eski asset varsa sil (yenisini yükleyebilmek için)
-        for asset in data.get("assets", []):
-            if asset["name"] == asset_name:
-                requests.delete(
-                    f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}",
-                    headers=headers, timeout=10
-                )
-                break
-
-        with open(STATE_FILE_NAME, "rb") as f:
-            content = f.read()
-
-        upload_headers = dict(headers)
-        upload_headers["Content-Type"] = "application/json"
-        up = requests.post(
-            f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={asset_name}",
-            headers=upload_headers, data=content, timeout=10
-        )
-        if up.status_code in (200, 201):
-            print("☁️ State, GitHub release'e API ile yüklendi.")
-        else:
-            print(f"⚠️ Release'e yükleme başarısız (HTTP {up.status_code}): {up.text[:200]}")
-    except Exception as e:
-        print(f"⚠️ Release'e state yükleme hatası: {e}")
-
-
 def handle_exit(signum, frame):
-    """Workflow iptal edildiğinde (SIGINT/SIGTERM) anlık konumu acilen kaydeder."""
-    print(f"\n⚠️ İptal/sonlandırma sinyali alındı ({signum}). "
+    """Sistem durdurma sinyali geldiğinde anlık konumu kaydeder."""
+    print(f"\n⚠️ Sonlandırma sinyali alındı ({signum}). "
           f"Son konum kaydediliyor => İndeks: {_current_index}, Saniye: {int(_current_seconds)}")
     update_local_state(_current_index, _current_seconds)
-    upload_state_to_release()
     sys.exit(0)
 
 
@@ -168,11 +122,10 @@ def get_m3u_playlist(m3u_url):
                     if match:
                         pending_title = match.group(1).strip()
                     else:
-                        # Virgül eksikse (hatalı m3u formatı), süre değerinden sonraki
-                        # her şeyi başlık kabul et: "#EXTINF:-1 Film Adı" gibi.
                         fallback = re.search(r'^#EXTINF:-?\d+\s+(.+)$', line)
                         pending_title = fallback.group(1).strip() if fallback else None
-                    rating_match = re.search(r'tvg-rating="([^"]*)"', line)
+
+                    rating_match = re.search(r'tvg-rating="?([^"\s]+)"?', line, re.IGNORECASE)
                     pending_rating = rating_match.group(1).strip() if rating_match else None
                 elif not line.startswith('#') and line.startswith('http'):
                     title = pending_title or os.path.basename(line.split('?')[0])
@@ -182,7 +135,7 @@ def get_m3u_playlist(m3u_url):
             return playlist
     except Exception as e:
         print(f"⚠️ M3U çekme hatası: {e}")
-    return [{"url": m3u_url, "title": os.path.basename(m3u_url)}]
+    return [{"url": m3u_url, "title": os.path.basename(m3u_url), "rating": None}]
 
 
 def download_logo():
@@ -198,7 +151,6 @@ def download_logo():
 
 
 def download_rating_icons():
-    """Her yaş sınırı ikonunu bir kez indirir (rating_icons/ klasörüne)."""
     os.makedirs(RATING_ICON_DIR, exist_ok=True)
     headers = {'User-Agent': STREAM_USER_AGENT}
     for rating, url in RATING_ICON_URLS.items():
@@ -218,10 +170,11 @@ def download_rating_icons():
 
 
 def get_rating_icon_path(rating):
-    """Verilen rating değeri için lokal ikon dosya yolunu döndürür (yoksa None)."""
     if not rating:
         return None
-    filename = os.path.join(RATING_ICON_DIR, f"{rating.replace('+', '')}.png")
+    # Hem "+18" hem "18" formatına uyumluluk
+    formatted_rating = rating if rating.startswith('+') else f"+{rating}"
+    filename = os.path.join(RATING_ICON_DIR, f"{formatted_rating.replace('+', '')}.png")
     if os.path.exists(filename) and os.path.getsize(filename) > 0:
         return filename
     return None
@@ -273,6 +226,7 @@ def start_m3u_stream():
     while True:
         playlist = get_m3u_playlist(M3U_URL)
         if not playlist:
+            print("⚠️ Playlist boş veya erişilemiyor. 10 sn bekleniyor...")
             time.sleep(10)
             continue
 
@@ -358,13 +312,12 @@ def start_m3u_stream():
 
         # --- YAZI, LOGO VE ROZET STİL AYARLARI ---
         text_color = "white@0.5"
-        logo_alpha = "0.5"          # <--- LOGO OPAKLIĞI (0.0 - 1.0 arası)
-        rating_icon_alpha = "1.0"   # <--- ROZET OPAKLIĞI (0.0 - 1.0 arası, 1.0 = tam opak)
-        rating_icon_height = 90     # <--- YAŞ SINIRI ROZETİNİN YÜKSEKLİĞİ (piksel)
-        rating_icon_x = 40          # <--- ROZETİN SOLDAN UZAKLIĞI
-        rating_icon_y = 40          # <--- ROZETİN YUKARIDAN UZAKLIĞI
+        logo_alpha = "0.5"          # Logo opaklığı
+        rating_icon_alpha = "1.0"   # Rozet opaklığı
+        rating_icon_height = 90     # Rozet yüksekliği
+        rating_icon_x = 40          # Rozet X konumu
+        rating_icon_y = 40          # Rozet Y konumu
 
-        # Ubuntu sunucularında varsayılan bulunan kalın ve temiz yazı tipi yolu:
         font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
         if os.path.exists(font_path):
@@ -378,7 +331,6 @@ def start_m3u_stream():
                 f"fontcolor={text_color}[v]"
             )
 
-        # Ekstra girişleri (logo, yaş sınırı rozeti) sırayla ekle ve index'lerini hesapla
         extra_inputs = []
         next_index = base_input_count
         logo_input_index = None
@@ -424,11 +376,10 @@ def start_m3u_stream():
             audio_map = ['-map', '[aout]']
 
         filter_str = ';'.join(filters)
-        logo_inputs = extra_inputs
 
         command = [
             'ffmpeg'
-        ] + input_args + logo_inputs + [
+        ] + input_args + extra_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
@@ -439,7 +390,7 @@ def start_m3u_stream():
             '-b:v', '2000k',
             '-maxrate', '2000k',
             '-bufsize', '4000k',
-            '-g', '60',
+            '-g', '50',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
@@ -452,14 +403,16 @@ def start_m3u_stream():
         process = subprocess.Popen(
             command,
             stderr=subprocess.PIPE,
-            universal_newlines=True
+            stdout=subprocess.DEVNULL,
+            universal_newlines=True,
+            bufsize=1
         )
 
         last_save_time = time.time()
         last_dashboard_time = time.time()
         current_stream_seconds = last_seconds
 
-        stderr_tail = []  # Hata anında göstermek için son satırları biriktirir
+        stderr_tail = []
 
         while True:
             line = process.stderr.readline()
@@ -471,28 +424,28 @@ def start_m3u_stream():
                 if len(stderr_tail) > 40:
                     stderr_tail.pop(0)
 
-            if "time=" in line:
-                time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
-                if time_match:
-                    hrs, mins, secs = time_match.groups()
-                    played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
-                    current_stream_seconds = last_seconds + played_seconds
+                if "time=" in line:
+                    time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
+                    if time_match:
+                        hrs, mins, secs = time_match.groups()
+                        played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
+                        current_stream_seconds = last_seconds + played_seconds
 
-                    # Sinyal yakalayıcının kullanacağı anlık konumu güncelle
-                    _current_index = current_index
-                    _current_seconds = current_stream_seconds
+                        _current_index = current_index
+                        _current_seconds = current_stream_seconds
 
-                    now = time.time()
+                        now = time.time()
 
-                    # Kaydetme sıklığı 30 sn'den 3 sn'ye düşürüldü
-                    if now - last_save_time > 3:
-                        update_local_state(current_index, current_stream_seconds)
-                        last_save_time = now
+                        if now - last_save_time >= 3:
+                            update_local_state(current_index, current_stream_seconds)
+                            last_save_time = now
 
-                    if now - last_dashboard_time > 30:
-                        print_dashboard(film_title, current_index, len(playlist), current_stream_seconds)
-                        write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
-                        last_dashboard_time = now
+                        if now - last_dashboard_time >= 30:
+                            print_dashboard(film_title, current_index, len(playlist), current_stream_seconds)
+                            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
+                            last_dashboard_time = now
+
+        process.wait()
 
         if process.returncode == 0:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
