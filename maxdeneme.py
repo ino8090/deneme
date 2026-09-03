@@ -43,11 +43,17 @@ AUTO_SYNC_MEASURE = os.getenv("AUTO_SYNC_MEASURE", "0") == "1"
 AUTO_SYNC_MIN = float(os.getenv("AUTO_SYNC_MIN", "0.1"))
 AUTO_SYNC_MAX = float(os.getenv("AUTO_SYNC_MAX", "8.0"))
 
+# Bir içerik oynatılırken, arka planda kaç saniyede bir M3U yeniden kontrol
+# edilsin. Bu sırada oynatılan URL, güncel M3U'da artık yoksa veya
+# değiştirilmişse, yayın durdurulup güncel listeye göre devam edilir.
+PLAYLIST_CHECK_INTERVAL = int(os.getenv("PLAYLIST_CHECK_INTERVAL", "300"))
+
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Anlık durum takibi için global değişkenler
 _current_index = 0
 _current_seconds = 0
+_current_url = None
 
 
 def format_hms(total_seconds):
@@ -117,26 +123,27 @@ def measure_sync_offset(video_url, audio_url, headers_arg):
 
 
 def get_local_state():
-    """Yerel state dosyasından son kayıtlı durumu okur."""
+    """Yerel state dosyasından son kayıtlı durumu okur (index, saniye, url)."""
     if os.path.exists(STATE_FILE_NAME):
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 idx = data.get("last_index", 0)
                 sec = data.get("last_seconds", 0)
+                url = data.get("last_url")
                 print(f"✅ Yerel state okundu ({STATE_FILE_NAME}) => İndeks: {idx}, Saniye: {sec}")
-                return idx, sec
+                return idx, sec, url
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
     else:
         print(f"ℹ️ Yerel state dosyası bulunamadı, 0'dan başlanıyor.")
-    return 0, 0
+    return 0, 0, None
 
 
-def update_local_state(index, seconds):
-    """Son konumu yerel dosyaya güvenli bir şekilde yazar."""
+def update_local_state(index, seconds, url=None):
+    """Son konumu (index, saniye, url) yerel dosyaya güvenli bir şekilde yazar."""
     try:
-        data = {"last_index": int(index), "last_seconds": int(seconds)}
+        data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url}
         temp_file = f"{STATE_FILE_NAME}.tmp"
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
@@ -150,7 +157,7 @@ def handle_exit(signum, frame):
     """Sistem durdurma sinyali geldiğinde anlık konumu kaydeder."""
     print(f"\n⚠️ Sonlandırma sinyali alındı ({signum}). "
           f"Son konum kaydediliyor => İndeks: {_current_index}, Saniye: {int(_current_seconds)}")
-    update_local_state(_current_index, _current_seconds)
+    update_local_state(_current_index, _current_seconds, _current_url)
     sys.exit(0)
 
 
@@ -277,7 +284,7 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
 
 
 def start_m3u_stream():
-    global _current_index, _current_seconds
+    global _current_index, _current_seconds, _current_url
 
     print(f"🔧 Kullanılan M3U   : {M3U_URL}")
     print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
@@ -287,8 +294,9 @@ def start_m3u_stream():
     download_logo()
     download_rating_icons()
 
-    current_index, last_seconds = get_local_state()
+    current_index, last_seconds, saved_last_url = get_local_state()
     _current_index, _current_seconds = current_index, last_seconds
+    resume_check_done = False
 
     while True:
         playlist = get_m3u_playlist(M3U_URL)
@@ -307,6 +315,19 @@ def start_m3u_stream():
         current_item = playlist[current_index]
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
+
+        # İlk döngüde (diskten yüklenen state ile), kaydedilen URL ile şu anki
+        # index'teki URL farklıysa, m3u'da bu sıradaki içerik değiştirilmiş
+        # demektir. Bu durumda kaldığı yerden değil, baştan başlanır.
+        if not resume_check_done:
+            resume_check_done = True
+            if last_seconds > 0 and saved_last_url and saved_last_url != target_stream_url:
+                print("⚠️ Kaydedilen URL ile bu sıradaki mevcut URL farklı — içerik değiştirilmiş görünüyor.")
+                print("↩️ Bu yüzden kaldığı saniyeden değil, baştan başlanacak.")
+                last_seconds = 0
+                _current_seconds = 0
+
+        _current_url = target_stream_url
 
         # İçeriğe özel sync-offset etiketi varsa öncelik onda; yoksa (ayrı
         # kaynaklıysa ve açıksa) otomatik ölçüm denenir; o da olmazsa genel
@@ -497,7 +518,9 @@ def start_m3u_stream():
 
         last_save_time = time.time()
         last_dashboard_time = time.time()
+        last_playlist_check_time = time.time()
         current_stream_seconds = last_seconds
+        playlist_changed_mid_play = False
 
         stderr_tail = []
 
@@ -511,6 +534,26 @@ def start_m3u_stream():
                 if len(stderr_tail) > 40:
                     stderr_tail.pop(0)
 
+                now = time.time()
+
+                # Oynatma sürerken periyodik olarak güncel M3U kontrol edilir.
+                # Şu an oynatılan URL, güncel listede aynı sırada değilse (link
+                # değiştirilmiş veya kaldırılmışsa), yayın durdurulup güncel
+                # listeye göre devam edilir.
+                if now - last_playlist_check_time >= PLAYLIST_CHECK_INTERVAL:
+                    last_playlist_check_time = now
+                    fresh_playlist = get_m3u_playlist(M3U_URL)
+                    still_same = (
+                        fresh_playlist
+                        and current_index < len(fresh_playlist)
+                        and fresh_playlist[current_index]["url"] == target_stream_url
+                    )
+                    if not still_same:
+                        print("🔄 M3U güncellenmiş: bu sıradaki içerik değişmiş veya kaldırılmış.")
+                        print("⏹️ Mevcut yayın durdurulup güncel listeye göre devam edilecek.")
+                        playlist_changed_mid_play = True
+                        process.terminate()
+
                 if "time=" in line:
                     time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
                     if time_match:
@@ -521,10 +564,8 @@ def start_m3u_stream():
                         _current_index = current_index
                         _current_seconds = current_stream_seconds
 
-                        now = time.time()
-
                         if now - last_save_time >= 3:
-                            update_local_state(current_index, current_stream_seconds)
+                            update_local_state(current_index, current_stream_seconds, target_stream_url)
                             last_save_time = now
 
                         if now - last_dashboard_time >= 30:
@@ -534,14 +575,23 @@ def start_m3u_stream():
 
         process.wait()
 
-        if process.returncode == 0:
+        if playlist_changed_mid_play:
+            # M3U değişikliği nedeniyle yayın kasıtlı olarak durduruldu.
+            # Aynı sıradaki (artık farklı olan) içeriğe baştan başlanacak.
+            last_seconds = 0
+            _current_index = current_index
+            _current_seconds = 0
+            _current_url = None
+            update_local_state(current_index, 0, None)
+        elif process.returncode == 0:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
             current_index += 1
             last_seconds = 0
             _current_index = current_index
             _current_seconds = 0
-            update_local_state(current_index, 0)
+            _current_url = None
+            update_local_state(current_index, 0, None)
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
             print("----- FFmpeg son çıktısı (debug) -----")
@@ -551,7 +601,7 @@ def start_m3u_stream():
             last_seconds = current_stream_seconds
             _current_index = current_index
             _current_seconds = last_seconds
-            update_local_state(current_index, last_seconds)
+            update_local_state(current_index, last_seconds, target_stream_url)
 
         print("⚠️ 5 saniye sonra tekrar bağlanılıyor...")
         time.sleep(5)
