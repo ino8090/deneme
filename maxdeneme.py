@@ -33,6 +33,16 @@ RATING_ICON_DIR = "rating_icons"
 # Ses / Video Senkronizasyon Ayarı (Saniye) -- senin için işe yarayan değer: 1.0
 AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.0"))
 
+# "1" yapılırsa, video;ses ayrı kaynaklı içeriklerde ffprobe ile gerçek
+# başlangıç zaman damgası farkı ölçülüp otomatik offset olarak denenir.
+# Ölçüm başarısız olursa veya mantıksız bir değer çıkarsa genel/etiketli
+# değere geri dönülür. Canlı yayınlarda ölçüm her denemede farklı çıkabilir.
+AUTO_SYNC_MEASURE = os.getenv("AUTO_SYNC_MEASURE", "0") == "1"
+# Otomatik ölçümde kabul edilecek makul aralık (saniye). Bu aralığın dışına
+# çıkan ölçümler güvenilmez kabul edilip atlanır.
+AUTO_SYNC_MIN = float(os.getenv("AUTO_SYNC_MIN", "0.1"))
+AUTO_SYNC_MAX = float(os.getenv("AUTO_SYNC_MAX", "8.0"))
+
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Anlık durum takibi için global değişkenler
@@ -60,6 +70,50 @@ def sanitize_text_for_ffmpeg(text):
     text = text.replace('[', '\\[')
     text = text.replace(']', '\\]')
     return text
+
+
+def _probe_start_time(url, headers_arg, stream_select):
+    """Verilen URL'deki belirtilen stream'in (v:0 / a:0) start_time değerini ffprobe ile okur."""
+    try:
+        cmd = [
+            'ffprobe', '-v', 'error',
+            '-headers', headers_arg,
+            '-select_streams', stream_select,
+            '-show_entries', 'stream=start_time',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            url
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        output = result.stdout.strip().splitlines()
+        if output and output[0] not in ('N/A', ''):
+            return float(output[0])
+    except Exception as e:
+        print(f"⚠️ ffprobe ölçüm hatası ({stream_select}): {e}")
+    return None
+
+
+def measure_sync_offset(video_url, audio_url, headers_arg):
+    """Video ve ses akışlarının start_time farkına bakarak olası bir senkron
+    ofseti tahmin eder. Güvenilir bir sonuç bulunamazsa None döner.
+    Not: Canlı yayınlarda bu ölçüm her denemede farklı çıkabilir; kesin değil,
+    en iyi tahmindir."""
+    v_start = _probe_start_time(video_url, headers_arg, 'v:0')
+    a_start = _probe_start_time(audio_url, headers_arg, 'a:0')
+
+    if v_start is None or a_start is None:
+        print("⚠️ Otomatik ölçüm: start_time bilgisi alınamadı, ölçüm atlanıyor.")
+        return None
+
+    # Ses videodan geride kalıyorsa (bizim senaryomuz), video akışı sesten
+    # daha erken başlıyor gibi görünür => (a_start - v_start) pozitif olur.
+    diff = round(a_start - v_start, 3)
+
+    if AUTO_SYNC_MIN <= diff <= AUTO_SYNC_MAX:
+        print(f"📏 Otomatik ölçüm başarılı: video start={v_start}, ses start={a_start}, fark={diff} sn")
+        return diff
+
+    print(f"⚠️ Otomatik ölçüm mantıksız bir değer verdi (fark={diff} sn), güvenli aralık dışında, atlanıyor.")
+    return None
 
 
 def get_local_state():
@@ -254,18 +308,15 @@ def start_m3u_stream():
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
-        # İçeriğe özel sync-offset etiketi varsa onu kullan, yoksa genel varsayılana dön.
+        # İçeriğe özel sync-offset etiketi varsa öncelik onda; yoksa (ayrı
+        # kaynaklıysa ve açıksa) otomatik ölçüm denenir; o da olmazsa genel
+        # varsayılana (AUDIO_SYNC_OFFSET) dönülür.
         item_sync_offset = current_item.get("sync_offset")
-        active_sync_offset = item_sync_offset if item_sync_offset is not None else AUDIO_SYNC_OFFSET
 
         print("=" * 60)
         print("📺 FixTV Canlı Aktarım Yayını (1080p 25fps - 2000k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
-        if item_sync_offset is not None:
-            print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (bu içeriğe özel)")
-        else:
-            print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (genel varsayılan)")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
@@ -277,6 +328,21 @@ def start_m3u_stream():
 
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
+
+            if item_sync_offset is not None:
+                active_sync_offset = item_sync_offset
+                print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (bu içeriğe özel etiket)")
+            elif AUTO_SYNC_MEASURE:
+                measured = measure_sync_offset(video_url, audio_url, headers_arg)
+                if measured is not None:
+                    active_sync_offset = measured
+                    print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (otomatik ölçüm)")
+                else:
+                    active_sync_offset = AUDIO_SYNC_OFFSET
+                    print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (ölçüm başarısız, genel varsayılan)")
+            else:
+                active_sync_offset = AUDIO_SYNC_OFFSET
+                print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (genel varsayılan)")
 
             input_args = [
                 '-headers', headers_arg,
