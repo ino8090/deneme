@@ -31,7 +31,7 @@ RATING_ICON_URLS = {
 RATING_ICON_DIR = "rating_icons"
 
 # Ses / Video Senkronizasyon Ayarı (Saniye) -- senin için işe yarayan değer: 1.0
-AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "2.0"))
+AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.5"))
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
