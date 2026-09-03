@@ -31,7 +31,7 @@ RATING_ICON_URLS = {
 RATING_ICON_DIR = "rating_icons"
 
 # Ses / Video Senkronizasyon Ayarı (Saniye) -- senin için işe yarayan değer: 1.0
-AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.5"))
+AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.0"))
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
@@ -113,6 +113,7 @@ def get_m3u_playlist(m3u_url):
             playlist = []
             pending_title = None
             pending_rating = None
+            pending_sync_offset = None
             for raw_line in lines:
                 line = raw_line.strip()
                 if not line:
@@ -127,15 +128,27 @@ def get_m3u_playlist(m3u_url):
 
                     rating_match = re.search(r'tvg-rating="?([^"\s]+)"?', line, re.IGNORECASE)
                     pending_rating = rating_match.group(1).strip() if rating_match else None
+
+                    # Bu içeriğe özel senkron ayarı: #EXTINF satırına
+                    # sync-offset="1.8" gibi bir etiket eklenirse, bu içerik için
+                    # genel AUDIO_SYNC_OFFSET yerine bu değer kullanılır.
+                    offset_match = re.search(r'sync-offset="?(-?[0-9]+(?:\.[0-9]+)?)"?', line, re.IGNORECASE)
+                    pending_sync_offset = float(offset_match.group(1)) if offset_match else None
                 elif not line.startswith('#') and line.startswith('http'):
                     title = pending_title or os.path.basename(line.split('?')[0])
-                    playlist.append({"url": line, "title": title, "rating": pending_rating})
+                    playlist.append({
+                        "url": line,
+                        "title": title,
+                        "rating": pending_rating,
+                        "sync_offset": pending_sync_offset,
+                    })
                     pending_title = None
                     pending_rating = None
+                    pending_sync_offset = None
             return playlist
     except Exception as e:
         print(f"⚠️ M3U çekme hatası: {e}")
-    return [{"url": m3u_url, "title": os.path.basename(m3u_url), "rating": None}]
+    return [{"url": m3u_url, "title": os.path.basename(m3u_url), "rating": None, "sync_offset": None}]
 
 
 def download_logo():
@@ -241,10 +254,18 @@ def start_m3u_stream():
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
+        # İçeriğe özel sync-offset etiketi varsa onu kullan, yoksa genel varsayılana dön.
+        item_sync_offset = current_item.get("sync_offset")
+        active_sync_offset = item_sync_offset if item_sync_offset is not None else AUDIO_SYNC_OFFSET
+
         print("=" * 60)
         print("📺 FixTV Canlı Aktarım Yayını (1080p 25fps - 2000k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
+        if item_sync_offset is not None:
+            print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (bu içeriğe özel)")
+        else:
+            print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (genel varsayılan)")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
@@ -262,8 +283,8 @@ def start_m3u_stream():
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
             ]
-            if AUDIO_SYNC_OFFSET > 0:
-                input_args += ['-itsoffset', str(AUDIO_SYNC_OFFSET)]
+            if active_sync_offset > 0:
+                input_args += ['-itsoffset', str(active_sync_offset)]
             input_args += [
                 '-re',
                 '-i', video_url,
@@ -271,8 +292,8 @@ def start_m3u_stream():
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
             ]
-            if AUDIO_SYNC_OFFSET < 0:
-                input_args += ['-itsoffset', str(abs(AUDIO_SYNC_OFFSET))]
+            if active_sync_offset < 0:
+                input_args += ['-itsoffset', str(abs(active_sync_offset))]
             input_args += [
                 '-re',
                 '-i', audio_url
