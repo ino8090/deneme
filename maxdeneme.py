@@ -93,56 +93,11 @@ def update_local_state(index, seconds):
         print(f"⚠️ Yerel state yazma hatası: {e}")
 
 
-def upload_state_to_release():
-    """State dosyasını doğrudan GitHub API ile release'e yükler.
-    Ayrı bir workflow adımına bağımlı kalmadan, cancel anında bile çalışır."""
-    token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-    repo = os.getenv("GITHUB_REPOSITORY")  # GitHub Actions bunu otomatik sağlar
-    if not token or not repo:
-        return
-    tag = "state-data"
-    try:
-        headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
-        r = requests.get(f"https://api.github.com/repos/{repo}/releases/tags/{tag}", headers=headers, timeout=10)
-        if r.status_code != 200:
-            print(f"⚠️ Release bulunamadı (HTTP {r.status_code}), state API ile yüklenemedi.")
-            return
-        data = r.json()
-        release_id = data["id"]
-        asset_name = os.path.basename(STATE_FILE_NAME)
-
-        # Aynı isimde eski asset varsa sil (yenisini yükleyebilmek için)
-        for asset in data.get("assets", []):
-            if asset["name"] == asset_name:
-                requests.delete(
-                    f"https://api.github.com/repos/{repo}/releases/assets/{asset['id']}",
-                    headers=headers, timeout=10
-                )
-                break
-
-        with open(STATE_FILE_NAME, "rb") as f:
-            content = f.read()
-
-        upload_headers = dict(headers)
-        upload_headers["Content-Type"] = "application/json"
-        up = requests.post(
-            f"https://uploads.github.com/repos/{repo}/releases/{release_id}/assets?name={asset_name}",
-            headers=upload_headers, data=content, timeout=10
-        )
-        if up.status_code in (200, 201):
-            print("☁️ State, GitHub release'e API ile yüklendi.")
-        else:
-            print(f"⚠️ Release'e yükleme başarısız (HTTP {up.status_code}): {up.text[:200]}")
-    except Exception as e:
-        print(f"⚠️ Release'e state yükleme hatası: {e}")
-
-
 def handle_exit(signum, frame):
     """Workflow iptal edildiğinde (SIGINT/SIGTERM) anlık konumu acilen kaydeder."""
     print(f"\n⚠️ İptal/sonlandırma sinyali alındı ({signum}). "
           f"Son konum kaydediliyor => İndeks: {_current_index}, Saniye: {int(_current_seconds)}")
     update_local_state(_current_index, _current_seconds)
-    upload_state_to_release()
     sys.exit(0)
 
 
