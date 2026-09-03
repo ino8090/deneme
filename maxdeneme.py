@@ -18,7 +18,6 @@ M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/010
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1787712844266.png"
 LOGO2_URL = os.getenv("LOGO2_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/file_00000000eae88246b13a221f896ea385.png"
 
-# State dosyası adı state_fixtv.json olarak güncellendi
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
@@ -150,6 +149,7 @@ def start_m3u_stream():
     download_logo()
 
     current_index, last_seconds = get_local_state()
+    consecutive_failures = 0  # Bozuk link döngülerini kırmak için hata sayacı
 
     while True:
         playlist = get_m3u_playlist(M3U_URL)
@@ -225,7 +225,7 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo.png', '-i', 'logo2.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:109[logo1];'
                 f'[{logo2_input_index}:v]scale=-2:30[logo2];'
                 '[main][logo1]overlay=50:50[tmp];'
@@ -235,7 +235,7 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:109[logo1];'
                 '[main][logo1]overlay=50:50[v]'
             )
@@ -243,7 +243,7 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo2.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:30[logo2];'
                 '[main][logo2]overlay=main_w-overlay_w-59:59[v]'
             )
@@ -251,7 +251,7 @@ def start_m3u_stream():
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[v]'
+                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[v]'
             )
 
         command = [
@@ -286,11 +286,17 @@ def start_m3u_stream():
         last_save_time = time.time()
         last_dashboard_time = time.time()
         current_stream_seconds = last_seconds
+        last_ffmpeg_lines = []
 
         while True:
             line = process.stderr.readline()
             if not line and process.poll() is not None:
                 break
+
+            if line:
+                last_ffmpeg_lines.append(line.strip())
+                if len(last_ffmpeg_lines) > 5:
+                    last_ffmpeg_lines.pop(0)
 
             if "time=" in line:
                 time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
@@ -315,12 +321,28 @@ def start_m3u_stream():
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
             current_index += 1
             last_seconds = 0
+            consecutive_failures = 0
             update_local_state(current_index, 0)
         else:
-            print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
-            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
-            last_seconds = current_stream_seconds
-            update_local_state(current_index, last_seconds)
+            consecutive_failures += 1
+            print(f"⚠️ Yayın koptu (Return Code: {process.returncode}).")
+            
+            if last_ffmpeg_lines:
+                print("🔍 FFmpeg Son Log Çıktıları:")
+                for log_err in last_ffmpeg_lines:
+                    print(f"   | {log_err}")
+
+            if consecutive_failures >= 3:
+                print(f"❌ İçerik 3 kez üst üste açılamadı. Link bozuk olabilir. Sıradaki içeriğe geçiliyor...")
+                current_index += 1
+                last_seconds = 0
+                consecutive_failures = 0
+                update_local_state(current_index, 0)
+            else:
+                print(f"🔄 Aynı saniyeden tekrar denenecek ({consecutive_failures}/3)...")
+                write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
+                last_seconds = current_stream_seconds
+                update_local_state(current_index, last_seconds)
 
         print("⚠️ 5 saniye sonra tekrar bağlanılıyor...")
         time.sleep(5)
