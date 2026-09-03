@@ -25,7 +25,6 @@ STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.3
 
 
 def format_hms(total_seconds):
-    """Saniyeyi SS:DD:SS formatına çevirir."""
     total_seconds = int(total_seconds)
     hrs = total_seconds // 3600
     mins = (total_seconds % 3600) // 60
@@ -34,7 +33,6 @@ def format_hms(total_seconds):
 
 
 def get_local_state():
-    """Yerel state_fixtv.json dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
@@ -51,7 +49,6 @@ def get_local_state():
 
 
 def update_local_state(index, seconds):
-    """Son konumu yerel state_fixtv.json dosyasına kaydeder."""
     try:
         data = {"last_index": int(index), "last_seconds": int(seconds)}
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
@@ -88,8 +85,6 @@ def get_m3u_playlist(m3u_url):
 
 def download_logo():
     headers = {'User-Agent': STREAM_USER_AGENT}
-    
-    # 1. Logo İndir
     try:
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
         if response.status_code == 200 and len(response.content) > 0:
@@ -99,7 +94,6 @@ def download_logo():
     except Exception as e:
         print(f"⚠️ 1. Logo indirme hatası: {e}")
 
-    # 2. Logo İndir
     try:
         response2 = requests.get(LOGO2_URL, headers=headers, timeout=15)
         if response2.status_code == 200 and len(response2.content) > 0:
@@ -149,7 +143,7 @@ def start_m3u_stream():
     download_logo()
 
     current_index, last_seconds = get_local_state()
-    consecutive_failures = 0  # Bozuk link döngülerini kırmak için hata sayacı
+    consecutive_failures = 0
 
     while True:
         playlist = get_m3u_playlist(M3U_URL)
@@ -173,7 +167,7 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # --- ÇİFT LİNK (VIDEO + SES SEPARATÖRÜ: ;) VE TEK LİNK KONTROLÜ ---
+        # --- DÜZELTİLMİŞ İNPUT BİLEŞENİ ---
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -186,15 +180,13 @@ def start_m3u_stream():
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-                '-re',
                 '-i', video_url,
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-                '-re',
                 '-i', audio_url
             ]
-            audio_map = ['-map', '1:a:0']
+            audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
             logo2_input_index = 3
         else:
@@ -203,7 +195,6 @@ def start_m3u_stream():
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-                '-re',
                 '-i', target_stream_url
             ]
             audio_map = ['-map', '0:a?']
@@ -220,12 +211,12 @@ def start_m3u_stream():
 
         logo_inputs = []
         
-        # Filtre zinciri senaryoları
+        # Video akışını açık şekilde 0:v seçerek ölçeklendiriyoruz
         if has_logo1 and has_logo2:
             logo_inputs = ['-i', 'logo.png', '-i', 'logo2.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:109[logo1];'
                 f'[{logo2_input_index}:v]scale=-2:30[logo2];'
                 '[main][logo1]overlay=50:50[tmp];'
@@ -235,7 +226,7 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:109[logo1];'
                 '[main][logo1]overlay=50:50[v]'
             )
@@ -243,7 +234,7 @@ def start_m3u_stream():
             logo_inputs = ['-i', 'logo2.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:30[logo2];'
                 '[main][logo2]overlay=main_w-overlay_w-59:59[v]'
             )
@@ -251,7 +242,7 @@ def start_m3u_stream():
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-ih)/2:(oh-ih)/2:black,fps=30[v]'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[v]'
             )
 
         command = [
@@ -262,6 +253,7 @@ def start_m3u_stream():
         ] + audio_map + [
             '-c:v', 'libx264',
             '-preset', 'veryfast',
+            '-tune', 'zerolatency',
             '-pix_fmt', 'yuv420p',
             '-r', '30',
             '-b:v', '2000k',
