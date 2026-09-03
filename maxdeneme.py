@@ -32,6 +32,12 @@ RATING_ICON_URLS = {
 }
 RATING_ICON_DIR = "rating_icons"
 
+# Video;Ses şeklinde ayrı kaynaklı içeriklerde SABİT bir kayma varsa (örn. ses
+# hep videodan belli bir süre sonra geliyorsa) burada saniye cinsinden ayarla.
+# Ses videodan SONRA geliyorsa -> pozitif değer gir (örn. "0.4") -> video geciktirilir, sesle hizalanır.
+# Ses videodan ÖNCE geliyorsa -> negatif değer gir (örn. "-0.4") -> ses geciktirilir, videoyla hizalanır.
+AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "0"))
+
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Sinyal yakalayıcının kullanacağı anlık konum bilgisi (global)
@@ -114,7 +120,13 @@ def get_m3u_playlist(m3u_url):
                     continue
                 if line.startswith('#EXTINF'):
                     match = re.search(r',(.+)$', line)
-                    pending_title = match.group(1).strip() if match else None
+                    if match:
+                        pending_title = match.group(1).strip()
+                    else:
+                        # Virgül eksikse (hatalı m3u formatı), süre değerinden sonraki
+                        # her şeyi başlık kabul et: "#EXTINF:-1 Film Adı" gibi.
+                        fallback = re.search(r'^#EXTINF:-?\d+\s+(.+)$', line)
+                        pending_title = fallback.group(1).strip() if fallback else None
                     rating_match = re.search(r'tvg-rating="([^"]*)"', line)
                     pending_rating = rating_match.group(1).strip() if rating_match else None
                 elif not line.startswith('#') and line.startswith('http'):
@@ -250,11 +262,19 @@ def start_m3u_stream():
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
+            ]
+            if AUDIO_SYNC_OFFSET > 0:
+                input_args += ['-itsoffset', str(AUDIO_SYNC_OFFSET)]
+            input_args += [
                 '-re',
                 '-i', video_url,
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
+            ]
+            if AUDIO_SYNC_OFFSET < 0:
+                input_args += ['-itsoffset', str(abs(AUDIO_SYNC_OFFSET))]
+            input_args += [
                 '-re',
                 '-i', audio_url
             ]
