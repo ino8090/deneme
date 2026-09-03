@@ -30,7 +30,7 @@ RATING_ICON_URLS = {
 }
 RATING_ICON_DIR = "rating_icons"
 
-# VARSAYILAN DEĞER 0.0 YAPILDI (Ses kaymasını önlemek için)
+# Varsayılan offset 0.0
 AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "0.0"))
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -265,7 +265,7 @@ def start_m3u_stream():
                 '-re',
                 '-i', audio_url
             ]
-            audio_map = ['-map', '1:a:0']
+            audio_map = ['-map', '[aout]']
             base_input_count = 2
             is_split_source = True
         else:
@@ -359,9 +359,8 @@ def start_m3u_stream():
         filters.append(f'[{last_label}]{drawtext_filter}')
 
         if is_split_source:
-            # Ses filtre zincirine kilitlenme ve resample eklendi
+            # aresample filtresi doğrudan filter_complex içine alındı
             filters.append('[1:a]asetpts=PTS-STARTPTS,aresample=async=1000[aout]')
-            audio_map = ['-map', '[aout]']
 
         filter_str = ';'.join(filters)
         logo_inputs = extra_inputs
@@ -376,7 +375,7 @@ def start_m3u_stream():
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
-            '-vsync', 'cfr',
+            '-fps_mode', 'cfr',
             '-b:v', '2000k',
             '-maxrate', '2000k',
             '-bufsize', '4000k',
@@ -384,7 +383,6 @@ def start_m3u_stream():
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
-            '-af', 'aresample=async=1000',
             '-f', 'flv',
             RTMP_SERVER
         ]
