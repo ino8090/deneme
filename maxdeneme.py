@@ -471,12 +471,12 @@ def start_m3u_stream():
             '-map', '[v]'
         ] + audio_map + [
             '-c:v', 'libx264',
-            '-preset', 'veryfast',
+            '-preset', 'fast',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
-            '-b:v', '2000k',
-            '-maxrate', '2000k',
-            '-bufsize', '4000k',
+            '-b:v', '3500k',
+            '-maxrate', '4500k',
+            '-bufsize', '9000k',
             '-g', '50',
             '-c:a', 'aac',
             '-b:a', '128k',
@@ -485,7 +485,7 @@ def start_m3u_stream():
             RTMP_SERVER
         ]
 
-        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2000k yayın iletiliyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 3500k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
