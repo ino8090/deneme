@@ -36,7 +36,7 @@ RATING_ICON_DIR = "rating_icons"
 # hep videodan belli bir süre sonra geliyorsa) burada saniye cinsinden ayarla.
 # Ses videodan SONRA geliyorsa -> pozitif değer gir (örn. "0.4") -> video geciktirilir, sesle hizalanır.
 # Ses videodan ÖNCE geliyorsa -> negatif değer gir (örn. "-0.4") -> ses geciktirilir, videoyla hizalanır.
-AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "4.0"))
+AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "3.0"))
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
