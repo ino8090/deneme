@@ -40,6 +40,7 @@ jobs:
     - name: 🚀 Yayını başlat
       env:
         STATE_FILE_NAME: "state_fixtv.json"
+        AUTO_SYNC_MEASURE: "1"
       run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
