@@ -1,4 +1,5 @@
 name: fixtv
+
 on:
   push:
     branches: [ main ]
@@ -28,7 +29,13 @@ jobs:
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
       run: |
-        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json
+        curl -sL "https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json" -o state_fixtv.json || true
+        if [ -s state_fixtv.json ]; then
+          echo "✅ State dosyası başarıyla indirildi:"
+          cat state_fixtv.json
+        else
+          echo "⚠️ State dosyası indirilemedi veya boş, varsayılan oluşturuluyor."
+        fi
 
     - name: 🚀 Yayını başlat
       env:
@@ -36,8 +43,9 @@ jobs:
       run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
-      if: always()
-      uses: softprops/action-gh-release@v1
+      # Script iptal edilse (Cancel Workflow) dahi BU ADIMIN ÇALIŞMASINI SAĞLAR
+      if: always() && hashFiles('state_fixtv.json') != ''
+      uses: softprops/action-gh-release@v2
       with:
         files: state_fixtv.json
         tag_name: state-data
@@ -48,7 +56,8 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     - name: 🔁 Süre doldu, yeni run'ı tetikle
-      if: '${{ !cancelled() }}'
+      # Yalnızca iptal edilmediyse (normal bitti veya süre dolduysa) otomatik devam ettirir
+      if: success()
       env:
         GH_TOKEN: ${{ secrets.GH_TOKEN }}
       run: |
