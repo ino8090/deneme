@@ -31,7 +31,7 @@ RATING_ICON_URLS = {
 RATING_ICON_DIR = "rating_icons"
 
 # Ses / Video Senkronizasyon Ayarı (Saniye) -- senin için işe yarayan değer: 1.0
-AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.1"))
+AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.0"))
 
 # "1" yapılırsa, video;ses ayrı kaynaklı içeriklerde ffprobe ile gerçek
 # başlangıç zaman damgası farkı ölçülüp otomatik offset olarak denenir.
