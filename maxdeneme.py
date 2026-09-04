@@ -230,24 +230,24 @@ def start_m3u_stream():
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
-            f"x=63:y=main_h-th-58"
+            f"x=53:y=main_h-th-53"
         )
 
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:109,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-59:59[tmp];'
+                '[main][logo1]overlay=main_w-overlay_w-68:59[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
-                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[main]{title_drawtext}[v]'
             )
 
@@ -260,9 +260,9 @@ def start_m3u_stream():
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
-            '-r', '30',
-            '-b:v', '2000k',
-            '-maxrate', '2000k',
+            '-r', '25',
+            '-b:v', '3500k',
+            '-maxrate', '3500k',
             '-bufsize', '4000k',
             '-g', '60',
             '-c:a', 'aac',
