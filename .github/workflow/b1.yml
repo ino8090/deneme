@@ -1,0 +1,34 @@
+name: B1 Canlı Yayın
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # Her 6 saatte bir yeniden başlat (GitHub Actions job süre sınırı nedeniyle)
+  workflow_dispatch: {}      # Manuel tetikleme imkanı
+
+concurrency:
+  group: b1-stream
+  cancel-in-progress: true
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350     # GitHub Actions'ın 360 dk sınırına yakın, biraz pay bırakılıyor
+
+    steps:
+      - name: Repoyu çek
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: FFmpeg kur
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Yayını başlat
+        env:
+          STREAM_KEY: ${{ secrets.STREAM_KEY }}
+          STREAM_URL: ${{ vars.STREAM_URL }}
+        run: |
+          timeout 340m python b1.py || true
