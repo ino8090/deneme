@@ -41,6 +41,9 @@ def format_hms(total_seconds):
 def get_local_state():
     """Yerel state_maxanimasyon.json dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
+        if os.path.getsize(STATE_FILE_NAME) == 0:
+            print(f"⚠️ Yerel state dosyası boş ({STATE_FILE_NAME}), 0'dan başlanıyor.")
+            return 0, 0
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -240,7 +243,7 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:109,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-68:59[tmp];'
+                '[main][logo1]overlay=main_w-overlay_w-59:59[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
         else:
