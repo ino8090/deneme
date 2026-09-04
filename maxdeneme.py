@@ -24,8 +24,8 @@ GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 # Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
-LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.6"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.6"))
+LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.8"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.9"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 
@@ -230,7 +230,7 @@ def start_m3u_stream():
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
-            f"x=53:y=main_h-th-53:box=1:boxcolor=black@0.5:boxborderw=10"
+            f"x=63:y=main_h-th-58"
         )
 
         if has_logo1:
@@ -240,7 +240,7 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:109,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-63:63[tmp];'
+                '[main][logo1]overlay=main_w-overlay_w-59:59[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
         else:
