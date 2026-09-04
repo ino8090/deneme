@@ -7,7 +7,6 @@ import time
 import os
 import re
 import json
-import signal
 import requests
 
 # ===================== AYARLAR =====================
@@ -18,51 +17,10 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788318046234.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_fixtv.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
-# Yaş sınırı (rating) ikonları
-RATING_ICON_URLS = {
-    "+7":  os.getenv("RATING_ICON_7",  "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_7.png"),
-    "+13": os.getenv("RATING_ICON_13", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_13.png"),
-    "+16": os.getenv("RATING_ICON_16", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_16.png"),
-    "+18": os.getenv("RATING_ICON_18", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/rating_18.png"),
-}
-RATING_ICON_DIR = "rating_icons"
-
-# Ses / Video Senkronizasyon Ayarı (Saniye) -- senin için işe yarayan değer: 1.0
-AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.0"))
-
-# "1" yapılırsa, video;ses ayrı kaynaklı içeriklerde ffprobe ile gerçek
-# başlangıç zaman damgası farkı ölçülüp otomatik offset olarak denenir.
-# Ölçüm başarısız olursa veya mantıksız bir değer çıkarsa genel/etiketli
-# değere geri dönülür. Canlı yayınlarda ölçüm her denemede farklı çıkabilir.
-AUTO_SYNC_MEASURE = os.getenv("AUTO_SYNC_MEASURE", "0") == "1"
-
-# "1" yapılırsa (varsayılan açık), TEK linkli içeriklerde (video ve ses
-# birlikte tek dosyada geldiği durumlarda) ffmpeg'in ses akışını video zaman
-# damgalarına göre akış sırasında otomatik hizalamasını sağlayan hafif bir
-# filtre uygulanır (aresample=async). Bu, runner yavaşlaması gibi anlık
-# nedenlerle oluşabilecek küçük kaymaları kendi kendine telafi eder.
-# Video;ses AYRI linkli içerikleri (elle/otomatik -itsoffset kullanan
-# kısmı) hiç etkilemez, sadece tek linkli branch'te devrededir.
-SINGLE_LINK_AUDIO_RESYNC = os.getenv("SINGLE_LINK_AUDIO_RESYNC", "1") == "1"
-# Otomatik ölçümde kabul edilecek makul aralık (saniye). Bu aralığın dışına
-# çıkan ölçümler güvenilmez kabul edilip atlanır.
-AUTO_SYNC_MIN = float(os.getenv("AUTO_SYNC_MIN", "0.1"))
-AUTO_SYNC_MAX = float(os.getenv("AUTO_SYNC_MAX", "8.0"))
-
-# Bir içerik oynatılırken, arka planda kaç saniyede bir M3U yeniden kontrol
-# edilsin. Bu sırada oynatılan URL, güncel M3U'da artık yoksa veya
-# değiştirilmişse, yayın durdurulup güncel listeye göre devam edilir.
-PLAYLIST_CHECK_INTERVAL = int(os.getenv("PLAYLIST_CHECK_INTERVAL", "300"))
-
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-# Anlık durum takibi için global değişkenler
-_current_index = 0
-_current_seconds = 0
-_current_url = None
 
 
 def format_hms(total_seconds):
@@ -74,104 +32,32 @@ def format_hms(total_seconds):
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
 
 
-def sanitize_text_for_ffmpeg(text):
-    """FFmpeg drawtext filtresinde özel karakterlerin kaçırılmasını sağlar."""
-    if not text:
-        return ""
-    text = text.replace('\\', '\\\\')
-    text = text.replace("'", "'\\\\''")
-    text = text.replace(':', '\\:')
-    text = text.replace('%', '\\%')
-    text = text.replace('[', '\\[')
-    text = text.replace(']', '\\]')
-    return text
-
-
-def _probe_start_time(url, headers_arg, stream_select):
-    """Verilen URL'deki belirtilen stream'in (v:0 / a:0) start_time değerini ffprobe ile okur."""
-    try:
-        cmd = [
-            'ffprobe', '-v', 'error',
-            '-headers', headers_arg,
-            '-select_streams', stream_select,
-            '-show_entries', 'stream=start_time',
-            '-of', 'default=noprint_wrappers=1:nokey=1',
-            url
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        output = result.stdout.strip().splitlines()
-        if output and output[0] not in ('N/A', ''):
-            return float(output[0])
-    except Exception as e:
-        print(f"⚠️ ffprobe ölçüm hatası ({stream_select}): {e}")
-    return None
-
-
-def measure_sync_offset(video_url, audio_url, headers_arg):
-    """Video ve ses akışlarının start_time farkına bakarak olası bir senkron
-    ofseti tahmin eder. Güvenilir bir sonuç bulunamazsa None döner.
-    Not: Canlı yayınlarda bu ölçüm her denemede farklı çıkabilir; kesin değil,
-    en iyi tahmindir."""
-    v_start = _probe_start_time(video_url, headers_arg, 'v:0')
-    a_start = _probe_start_time(audio_url, headers_arg, 'a:0')
-
-    if v_start is None or a_start is None:
-        print("⚠️ Otomatik ölçüm: start_time bilgisi alınamadı, ölçüm atlanıyor.")
-        return None
-
-    # Ses videodan geride kalıyorsa (bizim senaryomuz), video akışı sesten
-    # daha erken başlıyor gibi görünür => (a_start - v_start) pozitif olur.
-    diff = round(a_start - v_start, 3)
-
-    if AUTO_SYNC_MIN <= diff <= AUTO_SYNC_MAX:
-        print(f"📏 Otomatik ölçüm başarılı: video start={v_start}, ses start={a_start}, fark={diff} sn")
-        return diff
-
-    print(f"⚠️ Otomatik ölçüm mantıksız bir değer verdi (fark={diff} sn), güvenli aralık dışında, atlanıyor.")
-    return None
-
-
 def get_local_state():
-    """Yerel state dosyasından son kayıtlı durumu okur (index, saniye, url)."""
+    """Yerel state_maxanimasyon.json dosyasından son durumu okur."""
     if os.path.exists(STATE_FILE_NAME):
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 idx = data.get("last_index", 0)
                 sec = data.get("last_seconds", 0)
-                url = data.get("last_url")
                 print(f"✅ Yerel state okundu ({STATE_FILE_NAME}) => İndeks: {idx}, Saniye: {sec}")
-                return idx, sec, url
+                return idx, sec
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
     else:
         print(f"ℹ️ Yerel state dosyası bulunamadı, 0'dan başlanıyor.")
-    return 0, 0, None
+    return 0, 0
 
 
-def update_local_state(index, seconds, url=None):
-    """Son konumu (index, saniye, url) yerel dosyaya güvenli bir şekilde yazar."""
+def update_local_state(index, seconds):
+    """Son konumu yerel state_maxanimasyon.json dosyasına kaydeder."""
     try:
-        data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url}
-        temp_file = f"{STATE_FILE_NAME}.tmp"
-        with open(temp_file, "w", encoding="utf-8") as f:
+        data = {"last_index": int(index), "last_seconds": int(seconds)}
+        with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(temp_file, STATE_FILE_NAME)
         print(f"💾 Konum yerel dosyaya kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
     except Exception as e:
         print(f"⚠️ Yerel state yazma hatası: {e}")
-
-
-def handle_exit(signum, frame):
-    """Sistem durdurma sinyali geldiğinde anlık konumu kaydeder."""
-    print(f"\n⚠️ Sonlandırma sinyali alındı ({signum}). "
-          f"Son konum kaydediliyor => İndeks: {_current_index}, Saniye: {int(_current_seconds)}")
-    update_local_state(_current_index, _current_seconds, _current_url)
-    sys.exit(0)
-
-
-signal.signal(signal.SIGINT, handle_exit)
-signal.signal(signal.SIGTERM, handle_exit)
 
 
 def get_m3u_playlist(m3u_url):
@@ -182,85 +68,44 @@ def get_m3u_playlist(m3u_url):
             lines = response.text.splitlines()
             playlist = []
             pending_title = None
-            pending_rating = None
-            pending_sync_offset = None
             for raw_line in lines:
                 line = raw_line.strip()
                 if not line:
                     continue
                 if line.startswith('#EXTINF'):
                     match = re.search(r',(.+)$', line)
-                    if match:
-                        pending_title = match.group(1).strip()
-                    else:
-                        fallback = re.search(r'^#EXTINF:-?\d+\s+(.+)$', line)
-                        pending_title = fallback.group(1).strip() if fallback else None
-
-                    rating_match = re.search(r'tvg-rating="?([^"\s]+)"?', line, re.IGNORECASE)
-                    pending_rating = rating_match.group(1).strip() if rating_match else None
-
-                    # Bu içeriğe özel senkron ayarı: #EXTINF satırına
-                    # sync-offset="1.8" gibi bir etiket eklenirse, bu içerik için
-                    # genel AUDIO_SYNC_OFFSET yerine bu değer kullanılır.
-                    offset_match = re.search(r'sync-offset="?(-?[0-9]+(?:\.[0-9]+)?)"?', line, re.IGNORECASE)
-                    pending_sync_offset = float(offset_match.group(1)) if offset_match else None
+                    pending_title = match.group(1).strip() if match else None
                 elif not line.startswith('#') and line.startswith('http'):
                     title = pending_title or os.path.basename(line.split('?')[0])
-                    playlist.append({
-                        "url": line,
-                        "title": title,
-                        "rating": pending_rating,
-                        "sync_offset": pending_sync_offset,
-                    })
+                    playlist.append({"url": line, "title": title})
                     pending_title = None
-                    pending_rating = None
-                    pending_sync_offset = None
             return playlist
     except Exception as e:
         print(f"⚠️ M3U çekme hatası: {e}")
-    return [{"url": m3u_url, "title": os.path.basename(m3u_url), "rating": None, "sync_offset": None}]
+    return [{"url": m3u_url, "title": os.path.basename(m3u_url)}]
 
 
 def download_logo():
     headers = {'User-Agent': STREAM_USER_AGENT}
+    
+    # 1. Logo İndir
     try:
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
         if response.status_code == 200 and len(response.content) > 0:
             with open('logo.png', 'wb') as f:
                 f.write(response.content)
-            print("✅ Logo başarıyla indirildi.")
+            print("✅ 1. Logo başarıyla indirildi.")
     except Exception as e:
-        print(f"⚠️ Logo indirme hatası: {e}")
+        print(f"⚠️ 1. Logo indirme hatası: {e}")
 
 
-def download_rating_icons():
-    os.makedirs(RATING_ICON_DIR, exist_ok=True)
-    headers = {'User-Agent': STREAM_USER_AGENT}
-    for rating, url in RATING_ICON_URLS.items():
-        filename = os.path.join(RATING_ICON_DIR, f"{rating.replace('+', '')}.png")
-        if os.path.exists(filename) and os.path.getsize(filename) > 0:
-            continue
-        try:
-            response = requests.get(url, headers=headers, timeout=15)
-            if response.status_code == 200 and len(response.content) > 0:
-                with open(filename, 'wb') as f:
-                    f.write(response.content)
-                print(f"✅ {rating} ikonu indirildi.")
-            else:
-                print(f"⚠️ {rating} ikonu indirilemedi (HTTP {response.status_code}).")
-        except Exception as e:
-            print(f"⚠️ {rating} ikonu indirme hatası: {e}")
-
-
-def get_rating_icon_path(rating):
-    if not rating:
-        return None
-    # Hem "+18" hem "18" formatına uyumluluk
-    formatted_rating = rating if rating.startswith('+') else f"+{rating}"
-    filename = os.path.join(RATING_ICON_DIR, f"{formatted_rating.replace('+', '')}.png")
-    if os.path.exists(filename) and os.path.getsize(filename) > 0:
-        return filename
-    return None
+def write_title_file(title):
+    """Şu an oynayan içeriğin adını, drawtext filtresinin okuyacağı dosyaya yazar."""
+    try:
+        with open('title.txt', 'w', encoding='utf-8') as f:
+            f.write(title)
+    except Exception as e:
+        print(f"⚠️ Başlık dosyası yazma hatası: {e}")
 
 
 def print_dashboard(title, index, playlist_len, seconds, status="🟢 Yayında"):
@@ -277,7 +122,7 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
         return
     try:
         content = (
-            "## 📺 Canlı Yayın Durumu (FixTV)\n\n"
+            "## 📺 Canlı Yayın Durumu (Maxanimasyon)\n\n"
             "| Alan | Değer |\n"
             "|---|---|\n"
             f"| 🎬 Şu an oynayan içerik | {title} |\n"
@@ -293,24 +138,18 @@ def write_step_summary(title, index, playlist_len, seconds, status="🟢 Yayınd
 
 
 def start_m3u_stream():
-    global _current_index, _current_seconds, _current_url
-
     print(f"🔧 Kullanılan M3U   : {M3U_URL}")
-    print(f"🔧 Kullanılan Logo  : {LOGO_URL}")
+    print(f"🔧 Kullanılan Logo 1: {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
 
     download_logo()
-    download_rating_icons()
 
-    current_index, last_seconds, saved_last_url = get_local_state()
-    _current_index, _current_seconds = current_index, last_seconds
-    resume_check_done = False
+    current_index, last_seconds = get_local_state()
 
     while True:
         playlist = get_m3u_playlist(M3U_URL)
         if not playlist:
-            print("⚠️ Playlist boş veya erişilemiyor. 10 sn bekleniyor...")
             time.sleep(10)
             continue
 
@@ -318,39 +157,21 @@ def start_m3u_stream():
             current_index = 0
             last_seconds = 0
 
-        _current_index = current_index
-        _current_seconds = last_seconds
-
         current_item = playlist[current_index]
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
-        # İlk döngüde (diskten yüklenen state ile), kaydedilen URL ile şu anki
-        # index'teki URL farklıysa, m3u'da bu sıradaki içerik değiştirilmiş
-        # demektir. Bu durumda kaldığı yerden değil, baştan başlanır.
-        if not resume_check_done:
-            resume_check_done = True
-            if last_seconds > 0 and saved_last_url and saved_last_url != target_stream_url:
-                print("⚠️ Kaydedilen URL ile bu sıradaki mevcut URL farklı — içerik değiştirilmiş görünüyor.")
-                print("↩️ Bu yüzden kaldığı saniyeden değil, baştan başlanacak.")
-                last_seconds = 0
-                _current_seconds = 0
-
-        _current_url = target_stream_url
-
-        # İçeriğe özel sync-offset etiketi varsa öncelik onda; yoksa (ayrı
-        # kaynaklıysa ve açıksa) otomatik ölçüm denenir; o da olmazsa genel
-        # varsayılana (AUDIO_SYNC_OFFSET) dönülür.
-        item_sync_offset = current_item.get("sync_offset")
+        write_title_file(film_title)
 
         print("=" * 60)
-        print("📺 FixTV Canlı Aktarım Yayını (1080p 25fps - 2000k) Başlatılıyor")
+        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 30fps - 2000k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
+        # --- ÇİFT LİNK (VIDEO + SES SEPARATÖRÜ: ;) VE TEK LİNK KONTROLÜ ---
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -359,269 +180,132 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
-            if item_sync_offset is not None:
-                active_sync_offset = item_sync_offset
-                print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (bu içeriğe özel etiket)")
-            elif AUTO_SYNC_MEASURE:
-                measured = measure_sync_offset(video_url, audio_url, headers_arg)
-                if measured is not None:
-                    active_sync_offset = measured
-                    print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (otomatik ölçüm)")
-                else:
-                    active_sync_offset = AUDIO_SYNC_OFFSET
-                    print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (ölçüm başarısız, genel varsayılan)")
-            else:
-                active_sync_offset = AUDIO_SYNC_OFFSET
-                print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (genel varsayılan)")
-
             input_args = [
-                '-thread_queue_size', '1024',
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-            ]
-            if active_sync_offset > 0:
-                input_args += ['-itsoffset', str(active_sync_offset)]
-            input_args += [
                 '-re',
                 '-i', video_url,
-                '-thread_queue_size', '1024',
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
-            ]
-            if active_sync_offset < 0:
-                input_args += ['-itsoffset', str(abs(active_sync_offset))]
-            input_args += [
                 '-re',
                 '-i', audio_url
             ]
             audio_map = ['-map', '1:a:0']
-            base_input_count = 2
-            is_split_source = True
+            logo1_input_index = 2
+            logo2_input_index = 3
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
-                '-thread_queue_size', '1024',
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
                 '-re',
                 '-i', target_stream_url
             ]
-            audio_map = ['-map', '0:a:0?']
-            base_input_count = 1
-            is_split_source = False
+            audio_map = ['-map', '0:a?']
+            logo1_input_index = 1
+            logo2_input_index = 2
 
         print("=" * 60)
 
         print_dashboard(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
         write_step_summary(film_title, current_index, len(playlist), last_seconds, status="🟡 Başlatılıyor")
 
-        has_logo = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
+        has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        film_rating = current_item.get("rating")
-        rating_icon_path = get_rating_icon_path(film_rating)
-        has_rating_icon = rating_icon_path is not None
-        if film_rating and not has_rating_icon:
-            print(f"⚠️ '{film_rating}' için ikon bulunamadı, rozet gösterilmeyecek.")
-        elif has_rating_icon:
-            print(f"🔞 Yaş sınırı rozeti uygulanıyor: {film_rating}")
+        # Sağ üstteki logo kaldırıldı; soldaki logo artık sağ üst köşeye taşındı.
+        # Film adı, sol alt köşede yarı saydam kutu içinde gösteriliyor.
+        title_drawtext = (
+            "drawtext=textfile='title.txt':reload=1:fontcolor=white:fontsize=36:"
+            "x=50:y=main_h-th-50:box=1:boxcolor=black@0.5:boxborderw=10"
+        )
 
-        safe_title = sanitize_text_for_ffmpeg(film_title)
-
-        # --- YAZI, LOGO VE ROZET STİL AYARLARI ---
-        text_color = "white@0.5"
-        logo_alpha = "0.5"          # Logo opaklığı
-        rating_icon_alpha = "1.0"   # Rozet opaklığı
-        rating_icon_height = 90     # Rozet yüksekliği
-        rating_icon_x = 40          # Rozet X konumu
-        rating_icon_y = 40          # Rozet Y konumu
-
-        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-
-        if os.path.exists(font_path):
-            drawtext_filter = (
-                f"drawtext=fontfile='{font_path}':text='{safe_title}':x=103:y=h-94:fontsize=33:"
-                f"fontcolor={text_color}[v]"
+        if has_logo1:
+            logo_inputs = ['-i', 'logo.png']
+            filter_str = (
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                f'[{logo1_input_index}:v]scale=-2:109[logo1];'
+                '[main][logo1]overlay=main_w-overlay_w-59:59[tmp];'
+                f'[tmp]{title_drawtext}[v]'
             )
         else:
-            drawtext_filter = (
-                f"drawtext=text='{safe_title}':x=103:y=h-94:fontsize=33:"
-                f"fontcolor={text_color}[v]"
+            logo_inputs = []
+            filter_str = (
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
+                f'[main]{title_drawtext}[v]'
             )
-
-        extra_inputs = []
-        next_index = base_input_count
-        logo_input_index = None
-        rating_input_index = None
-
-        if has_logo:
-            extra_inputs += ['-i', 'logo.png']
-            logo_input_index = next_index
-            next_index += 1
-
-        if has_rating_icon:
-            extra_inputs += ['-i', rating_icon_path]
-            rating_input_index = next_index
-            next_index += 1
-
-        filters = [
-            '[0:v]setpts=PTS-STARTPTS,scale=1920:1080:force_original_aspect_ratio=decrease,'
-            'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main]'
-        ]
-        last_label = 'main'
-
-        if has_logo:
-            filters.append(
-                f'[{logo_input_index}:v]scale=-2:102,format=rgba,colorchannelmixer=aa={logo_alpha}[logo]'
-            )
-            filters.append(f'[{last_label}][logo]overlay=main_w-overlay_w-129:90[afterlogo]')
-            last_label = 'afterlogo'
-
-        if has_rating_icon:
-            filters.append(
-                f'[{rating_input_index}:v]scale=-2:{rating_icon_height},format=rgba,'
-                f'colorchannelmixer=aa={rating_icon_alpha}[ratingicon]'
-            )
-            filters.append(
-                f'[{last_label}][ratingicon]overlay={rating_icon_x}:{rating_icon_y}[afterrating]'
-            )
-            last_label = 'afterrating'
-
-        filters.append(f'[{last_label}]{drawtext_filter}')
-
-        if is_split_source:
-            filters.append('[1:a]asetpts=PTS-STARTPTS[aout]')
-            audio_map = ['-map', '[aout]']
-        elif SINGLE_LINK_AUDIO_RESYNC:
-            # Tek linkli içerik: ses akışını video zaman damgalarına göre
-            # akış sırasında otomatik hizala. async=1000, ffmpeg'in resmi
-            # dokümantasyonunda önerilen etkili düzeltme değeridir (saniyede
-            # en fazla 1000 örnek esnetme/sıkıştırma ile hizalar).
-            filters.append('[0:a]aresample=async=1000:min_hard_comp=0.100000:first_pts=0[aout]')
-            audio_map = ['-map', '[aout]']
-
-        filter_str = ';'.join(filters)
 
         command = [
             'ffmpeg'
-        ] + input_args + extra_inputs + [
+        ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
-            '-r', '25',
-            '-b:v', '2500k',
-            '-maxrate', '3000k',
-            '-bufsize', '6000k',
-            '-g', '50',
+            '-r', '30',
+            '-b:v', '2000k',
+            '-maxrate', '2000k',
+            '-bufsize', '4000k',
+            '-g', '60',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
-            '-max_muxing_queue_size', '1024',
             '-f', 'flv',
             RTMP_SERVER
         ]
 
-        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 3500k yayın iletiliyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 30fps @ 2000k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
             stderr=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            universal_newlines=True,
-            bufsize=1
+            universal_newlines=True
         )
 
         last_save_time = time.time()
         last_dashboard_time = time.time()
-        last_playlist_check_time = time.time()
         current_stream_seconds = last_seconds
-        playlist_changed_mid_play = False
-
-        stderr_tail = []
 
         while True:
             line = process.stderr.readline()
             if not line and process.poll() is not None:
                 break
 
-            if line:
-                stderr_tail.append(line)
-                if len(stderr_tail) > 40:
-                    stderr_tail.pop(0)
+            if "time=" in line:
+                time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
+                if time_match:
+                    hrs, mins, secs = time_match.groups()
+                    played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
+                    current_stream_seconds = last_seconds + played_seconds
 
-                now = time.time()
+                    now = time.time()
 
-                # Oynatma sürerken periyodik olarak güncel M3U kontrol edilir.
-                # Şu an oynatılan URL, güncel listede aynı sırada değilse (link
-                # değiştirilmiş veya kaldırılmışsa), yayın durdurulup güncel
-                # listeye göre devam edilir.
-                if now - last_playlist_check_time >= PLAYLIST_CHECK_INTERVAL:
-                    last_playlist_check_time = now
-                    fresh_playlist = get_m3u_playlist(M3U_URL)
-                    still_same = (
-                        fresh_playlist
-                        and current_index < len(fresh_playlist)
-                        and fresh_playlist[current_index]["url"] == target_stream_url
-                    )
-                    if not still_same:
-                        print("🔄 M3U güncellenmiş: bu sıradaki içerik değişmiş veya kaldırılmış.")
-                        print("⏹️ Mevcut yayın durdurulup güncel listeye göre devam edilecek.")
-                        playlist_changed_mid_play = True
-                        process.terminate()
+                    if now - last_save_time > 30:
+                        update_local_state(current_index, current_stream_seconds)
+                        last_save_time = now
 
-                if "time=" in line:
-                    time_match = re.search(r'time=(\d+):(\d+):(\d+\.\d+)', line)
-                    if time_match:
-                        hrs, mins, secs = time_match.groups()
-                        played_seconds = int(hrs) * 3600 + int(mins) * 60 + float(secs)
-                        current_stream_seconds = last_seconds + played_seconds
+                    if now - last_dashboard_time > 30:
+                        print_dashboard(film_title, current_index, len(playlist), current_stream_seconds)
+                        write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
+                        last_dashboard_time = now
 
-                        _current_index = current_index
-                        _current_seconds = current_stream_seconds
-
-                        if now - last_save_time >= 3:
-                            update_local_state(current_index, current_stream_seconds, target_stream_url)
-                            last_save_time = now
-
-                        if now - last_dashboard_time >= 30:
-                            print_dashboard(film_title, current_index, len(playlist), current_stream_seconds)
-                            write_step_summary(film_title, current_index, len(playlist), current_stream_seconds)
-                            last_dashboard_time = now
-
-        process.wait()
-
-        if playlist_changed_mid_play:
-            # M3U değişikliği nedeniyle yayın kasıtlı olarak durduruldu.
-            # Aynı sıradaki (artık farklı olan) içeriğe baştan başlanacak.
-            last_seconds = 0
-            _current_index = current_index
-            _current_seconds = 0
-            _current_url = None
-            update_local_state(current_index, 0, None)
-        elif process.returncode == 0:
+        if process.returncode == 0:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
             current_index += 1
             last_seconds = 0
-            _current_index = current_index
-            _current_seconds = 0
-            _current_url = None
-            update_local_state(current_index, 0, None)
+            update_local_state(current_index, 0)
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
-            print("----- FFmpeg son çıktısı (debug) -----")
-            print("".join(stderr_tail))
-            print("---------------------------------------")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
             last_seconds = current_stream_seconds
-            _current_index = current_index
-            _current_seconds = last_seconds
-            update_local_state(current_index, last_seconds, target_stream_url)
+            update_local_state(current_index, last_seconds)
 
         print("⚠️ 5 saniye sonra tekrar bağlanılıyor...")
         time.sleep(5)
