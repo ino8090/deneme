@@ -257,7 +257,7 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:103,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-107:80[tmp];'
+                '[main][logo1]overlay=main_w-overlay_w-110:86[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
         else:
