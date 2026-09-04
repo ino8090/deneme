@@ -246,7 +246,7 @@ def start_m3u_stream():
         # Film adı, sol alt köşede yarı saydam kutu içinde, kalın fontla gösteriliyor.
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=36:"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=32:"
             f"x=80:y=main_h-th-80"
         )
 
