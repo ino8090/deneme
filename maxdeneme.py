@@ -38,6 +38,15 @@ AUDIO_SYNC_OFFSET = float(os.getenv("AUDIO_SYNC_OFFSET", "1.0"))
 # Ölçüm başarısız olursa veya mantıksız bir değer çıkarsa genel/etiketli
 # değere geri dönülür. Canlı yayınlarda ölçüm her denemede farklı çıkabilir.
 AUTO_SYNC_MEASURE = os.getenv("AUTO_SYNC_MEASURE", "0") == "1"
+
+# "1" yapılırsa (varsayılan açık), TEK linkli içeriklerde (video ve ses
+# birlikte tek dosyada geldiği durumlarda) ffmpeg'in ses akışını video zaman
+# damgalarına göre akış sırasında otomatik hizalamasını sağlayan hafif bir
+# filtre uygulanır (aresample=async). Bu, runner yavaşlaması gibi anlık
+# nedenlerle oluşabilecek küçük kaymaları kendi kendine telafi eder.
+# Video;ses AYRI linkli içerikleri (elle/otomatik -itsoffset kullanan
+# kısmı) hiç etkilemez, sadece tek linkli branch'te devrededir.
+SINGLE_LINK_AUDIO_RESYNC = os.getenv("SINGLE_LINK_AUDIO_RESYNC", "1") == "1"
 # Otomatik ölçümde kabul edilecek makul aralık (saniye). Bu aralığın dışına
 # çıkan ölçümler güvenilmez kabul edilip atlanır.
 AUTO_SYNC_MIN = float(os.getenv("AUTO_SYNC_MIN", "0.1"))
@@ -366,6 +375,7 @@ def start_m3u_stream():
                 print(f"🎚️ Senkron Ofseti   : {active_sync_offset} sn (genel varsayılan)")
 
             input_args = [
+                '-thread_queue_size', '1024',
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
@@ -375,6 +385,7 @@ def start_m3u_stream():
             input_args += [
                 '-re',
                 '-i', video_url,
+                '-thread_queue_size', '1024',
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
@@ -391,6 +402,7 @@ def start_m3u_stream():
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
+                '-thread_queue_size', '1024',
                 '-headers', headers_arg,
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
@@ -482,6 +494,13 @@ def start_m3u_stream():
         if is_split_source:
             filters.append('[1:a]asetpts=PTS-STARTPTS[aout]')
             audio_map = ['-map', '[aout]']
+        elif SINGLE_LINK_AUDIO_RESYNC:
+            # Tek linkli içerik: ses akışını video zaman damgalarına göre
+            # akış sırasında otomatik hizala. async=1000, ffmpeg'in resmi
+            # dokümantasyonunda önerilen etkili düzeltme değeridir (saniyede
+            # en fazla 1000 örnek esnetme/sıkıştırma ile hizalar).
+            filters.append('[0:a]aresample=async=1000:min_hard_comp=0.100000:first_pts=0[aout]')
+            audio_map = ['-map', '[aout]']
 
         filter_str = ';'.join(filters)
 
@@ -502,6 +521,7 @@ def start_m3u_stream():
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
+            '-max_muxing_queue_size', '1024',
             '-f', 'flv',
             RTMP_SERVER
         ]
