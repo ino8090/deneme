@@ -12,16 +12,21 @@ from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "fiztv"
+STREAM_KEY = os.getenv("STREAM_KEY") or "fixtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1787712844266.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788318046234.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "fixtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+# Logo ve yazı opaklık ayarları (0.0 - 1.0 arası)
+LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.6"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.6"))
+BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 
 def format_hms(total_seconds):
@@ -221,10 +226,11 @@ def start_m3u_stream():
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
         # Sağ üstteki logo kaldırıldı; soldaki logo artık sağ üst köşeye taşındı.
-        # Film adı, sol alt köşede yarı saydam kutu içinde gösteriliyor.
+        # Film adı, sol alt köşede yarı saydam kutu içinde, kalın fontla gösteriliyor.
         title_drawtext = (
-            "drawtext=textfile='title.txt':reload=1:fontcolor=white:fontsize=36:"
-            "x=50:y=main_h-th-50:box=1:boxcolor=black@0.5:boxborderw=10"
+            f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=36:"
+            f"x=50:y=main_h-th-50:box=1:boxcolor=black@0.5:boxborderw=10"
         )
 
         if has_logo1:
@@ -232,7 +238,8 @@ def start_m3u_stream():
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
-                f'[{logo1_input_index}:v]scale=-2:109[logo1];'
+                f'[{logo1_input_index}:v]scale=-2:109,format=rgba,'
+                f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
                 '[main][logo1]overlay=main_w-overlay_w-59:59[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
