@@ -12,7 +12,7 @@ from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "fiztv"
+STREAM_KEY = os.getenv("STREAM_KEY") or "fixtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
@@ -229,8 +229,8 @@ def start_m3u_stream():
         # Film adı, sol alt köşede yarı saydam kutu içinde, kalın fontla gösteriliyor.
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=36:"
-            f"x=50:y=main_h-th-50:box=1:boxcolor=black@0.5:boxborderw=10"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
+            f"x=53:y=main_h-th-53:box=1:boxcolor=black@0.5:boxborderw=10"
         )
 
         if has_logo1:
@@ -240,7 +240,7 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=30[main];'
                 f'[{logo1_input_index}:v]scale=-2:109,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-59:59[tmp];'
+                '[main][logo1]overlay=main_w-overlay_w-63:63[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
         else:
