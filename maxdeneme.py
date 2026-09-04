@@ -39,29 +39,30 @@ def format_hms(total_seconds):
 
 
 def get_local_state():
-    """Yerel state_maxanimasyon.json dosyasından son durumu okur."""
+    """Yerel state dosyasından son durumu okur (indeks, saniye, o an oynayan linkin URL'si)."""
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
             print(f"⚠️ Yerel state dosyası boş ({STATE_FILE_NAME}), 0'dan başlanıyor.")
-            return 0, 0
+            return 0, 0, ""
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 idx = data.get("last_index", 0)
                 sec = data.get("last_seconds", 0)
+                url = data.get("last_url", "")
                 print(f"✅ Yerel state okundu ({STATE_FILE_NAME}) => İndeks: {idx}, Saniye: {sec}")
-                return idx, sec
+                return idx, sec, url
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
     else:
         print(f"ℹ️ Yerel state dosyası bulunamadı, 0'dan başlanıyor.")
-    return 0, 0
+    return 0, 0, ""
 
 
-def update_local_state(index, seconds):
-    """Son konumu yerel state_maxanimasyon.json dosyasına kaydeder."""
+def update_local_state(index, seconds, url=""):
+    """Son konumu (indeks, saniye) ve o an oynayan linkin URL'sini yerel state dosyasına kaydeder."""
     try:
-        data = {"last_index": int(index), "last_seconds": int(seconds)}
+        data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url}
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"💾 Konum yerel dosyaya kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
@@ -154,7 +155,7 @@ def start_m3u_stream():
 
     download_logo()
 
-    current_index, last_seconds = get_local_state()
+    current_index, last_seconds, last_url = get_local_state()
 
     consecutive_fast_failures = 0
     FAST_FAIL_THRESHOLD_SECONDS = 20
@@ -169,10 +170,23 @@ def start_m3u_stream():
         if current_index >= len(playlist):
             current_index = 0
             last_seconds = 0
+            last_url = ""
 
         current_item = playlist[current_index]
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
+
+        # --- LİNK DEĞİŞİKLİĞİ KONTROLÜ ---
+        # Aynı indeksteki filmin linki, kaldığımız yerden devam ederken değiştiyse
+        # (kullanıcı o filmin linkini güncellediyse), bu artık "yeni" bir video demektir.
+        # Bu yüzden kaldığı saniyeden değil, baştan (0. saniyeden) başlatılır.
+        if last_seconds > 0 and last_url and target_stream_url != last_url:
+            print(f"🔄 Bu sıradaki ({current_index + 1}) içeriğin linki değişmiş, video baştan başlatılacak.")
+            print(f"   Eski link: {last_url}")
+            print(f"   Yeni link: {target_stream_url}")
+            last_seconds = 0
+
+        last_url = target_stream_url
 
         write_title_file(film_title)
 
@@ -233,7 +247,7 @@ def start_m3u_stream():
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
-            f"x=53:y=main_h-th-53"
+            f"x=60:y=main_h-th-53"
         )
 
         if has_logo1:
@@ -243,7 +257,7 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:109,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-59:59[tmp];'
+                '[main][logo1]overlay=main_w-overlay_w-67:59[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
         else:
@@ -306,7 +320,7 @@ def start_m3u_stream():
                     now = time.time()
 
                     if now - last_save_time > 30:
-                        update_local_state(current_index, current_stream_seconds)
+                        update_local_state(current_index, current_stream_seconds, target_stream_url)
                         last_save_time = now
 
                     if now - last_dashboard_time > 30:
@@ -319,7 +333,8 @@ def start_m3u_stream():
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="✅ Bitti, sıradakine geçiliyor")
             current_index += 1
             last_seconds = 0
-            update_local_state(current_index, 0)
+            last_url = ""
+            update_local_state(current_index, 0, "")
             consecutive_fast_failures = 0
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
@@ -334,7 +349,8 @@ def start_m3u_stream():
             else:
                 consecutive_fast_failures = 0
             last_seconds = current_stream_seconds
-            update_local_state(current_index, last_seconds)
+            last_url = target_stream_url
+            update_local_state(current_index, last_seconds, last_url)
 
         if consecutive_fast_failures > 0:
             retry_delay = min(5 * (2 ** consecutive_fast_failures), MAX_RETRY_DELAY_SECONDS)
