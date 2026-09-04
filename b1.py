@@ -12,7 +12,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "b1"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 # Canlı HLS (m3u8) kaynağı
-STREAM_URL = os.getenv("STREAM_URL") or "http://niltvpremium.xyz:8080/live/erhunyeltekin/r5EeaS2sRr/283633.m3u8"
+STREAM_URL = os.getenv("STREAM_URL") or "https://sportsbite.org//ch1/track/62"
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
