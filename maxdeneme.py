@@ -511,12 +511,12 @@ def start_m3u_stream():
             '-map', '[v]'
         ] + audio_map + [
             '-c:v', 'libx264',
-            '-preset', 'fast',
+            '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
-            '-b:v', '3500k',
-            '-maxrate', '4500k',
-            '-bufsize', '9000k',
+            '-b:v', '2500k',
+            '-maxrate', '3000k',
+            '-bufsize', '6000k',
             '-g', '50',
             '-c:a', 'aac',
             '-b:a', '128k',
