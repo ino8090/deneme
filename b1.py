@@ -4,32 +4,59 @@
 import subprocess
 import time
 import os
+import re
 from collections import deque
+import requests
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
 STREAM_KEY = os.getenv("STREAM_KEY") or "b1"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-# Canlı HLS (m3u8) kaynağı
-STREAM_URL = os.getenv("STREAM_URL") or "https://sportsbite.org//ch1/track/62"
+# Web sayfası veya doğrudan m3u8 adresi
+PAGE_URL = os.getenv("STREAM_URL") or "https://betvinotv29.live/channel?id=zirve"
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
 MAX_RETRY_DELAY_SECONDS = 60
 
 
-def start_live_relay():
-    print(f"🔧 Kaynak (m3u8)    : {STREAM_URL}")
-    print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
+def extract_m3u8(page_url):
+    """Sayfa kaynağından asıl .m3u8 akış adresini ayıklar."""
+    if page_url.endswith(".m3u8"):
+        return page_url
 
+    headers = {
+        "User-Agent": STREAM_USER_AGENT,
+        "Referer": page_url
+    }
+    try:
+        response = requests.get(page_url, headers=headers, timeout=10)
+        # HTML içindeki .m3u8 bağlantılarını ara
+        matches = re.findall(r'https?://[^\s\'"]+\.m3u8[^\s\'"]*', response.text)
+        if matches:
+            found_url = matches[0]
+            print(f"✅ Çözümlenen Yayın Bağlantısı: {found_url}")
+            return found_url
+    except Exception as e:
+        print(f"⚠️ Link ayıklama hatası: {e}")
+
+    print("⚠️ Otomatik m3u8 bulunamadı, doğrudan verilen URL kullanılacak.")
+    return page_url
+
+
+def start_live_relay():
     consecutive_failures = 0
-    headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
     while True:
+        print("\n🔍 Yayın adresi kontrol ediliyor...")
+        stream_target = extract_m3u8(PAGE_URL)
+
+        # Sunucu engeline takılmamak için Header yapılandırması
+        headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {PAGE_URL}\r\n"
+
         print("=" * 60)
         print("📡 Canlı yayın aktarımı başlatılıyor...")
-        print(f"🎯 Kaynak : {STREAM_URL}")
+        print(f"🎯 Kaynak : {stream_target}")
         print(f"🎯 Hedef  : {RTMP_SERVER}")
         print("=" * 60)
 
@@ -39,7 +66,7 @@ def start_live_relay():
             '-reconnect', '1',
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '5',
-            '-i', STREAM_URL,
+            '-i', stream_target,
             '-filter_complex',
             '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
             'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[v]',
