@@ -32,7 +32,7 @@ jobs:
 
     - name: 🚀 Yayını başlat
       env:
-        STATE_FILE_NAME: "state_maxanimasyon.json"
+        STATE_FILE_NAME: "state_fixtv.json"
       run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
