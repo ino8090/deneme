@@ -12,7 +12,7 @@ from collections import deque
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "fixtv"
+STREAM_KEY = os.getenv("STREAM_KEY") or "fiztv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
@@ -147,6 +147,10 @@ def start_m3u_stream():
     download_logo()
 
     current_index, last_seconds = get_local_state()
+
+    consecutive_fast_failures = 0
+    FAST_FAIL_THRESHOLD_SECONDS = 20
+    MAX_RETRY_DELAY_SECONDS = 120
 
     while True:
         playlist = get_m3u_playlist(M3U_URL)
@@ -306,6 +310,7 @@ def start_m3u_stream():
             current_index += 1
             last_seconds = 0
             update_local_state(current_index, 0)
+            consecutive_fast_failures = 0
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
             if stderr_tail:
@@ -313,11 +318,21 @@ def start_m3u_stream():
                 for tail_line in stderr_tail:
                     print(f"   {tail_line}")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
+            duration_this_attempt = current_stream_seconds - last_seconds
+            if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
+                consecutive_fast_failures += 1
+            else:
+                consecutive_fast_failures = 0
             last_seconds = current_stream_seconds
             update_local_state(current_index, last_seconds)
 
-        print("⚠️ 5 saniye sonra tekrar bağlanılıyor...")
-        time.sleep(5)
+        if consecutive_fast_failures > 0:
+            retry_delay = min(5 * (2 ** consecutive_fast_failures), MAX_RETRY_DELAY_SECONDS)
+        else:
+            retry_delay = 5
+
+        print(f"⚠️ {retry_delay} saniye sonra tekrar bağlanılıyor...")
+        time.sleep(retry_delay)
 
 
 if __name__ == "__main__":
