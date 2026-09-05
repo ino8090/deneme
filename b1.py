@@ -14,7 +14,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "b1"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 # Web sayfası veya doğrudan m3u8 adresi
-PAGE_URL = os.getenv("STREAM_URL") or "https://betvinotv29.live/channel?id=zirve"
+PAGE_URL = os.getenv("STREAM_URL") or "https://vuvuu.enesgonullu2009-356.workers.dev/?url=https%3A%2F%2Fkool.to%2Fkool-iptv%2Fplay%2F13524210538e192d878d20"
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 MAX_RETRY_DELAY_SECONDS = 60
