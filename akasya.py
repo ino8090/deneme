@@ -202,38 +202,29 @@ def start_m3u_stream():
 
             input_args = [
                 '-headers', headers_arg,
-                '-m3u8_hold_counters', '1',
-                '-allowed_extensions', 'ALL',
-                '-http_persistent', '0',
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-                '-ss', str(last_seconds),
-                '-re',
+                '-rw_timeout', '15000000',
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '10',
                 '-i', video_url,
                 '-headers', headers_arg,
-                '-m3u8_hold_counters', '1',
-                '-allowed_extensions', 'ALL',
-                '-http_persistent', '0',
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-rw_timeout', '15000000',
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '10',
+                '-i', audio_url,
                 '-ss', str(last_seconds),
-                '-re',
-                '-i', audio_url
+                '-re'
             ]
-            video_map = ['-map', '0:v:best']
+            video_map = ['-map', '0:v:0']
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
                 '-headers', headers_arg,
-                '-m3u8_hold_counters', '1',
-                '-allowed_extensions', 'ALL',
-                '-http_persistent', '0',
-                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+                '-rw_timeout', '15000000',
+                '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '10',
+                '-i', target_stream_url,
                 '-ss', str(last_seconds),
-                '-re',
-                '-i', target_stream_url
+                '-re'
             ]
-            # M3U8 listesinden EN İYİ video akışını ve İLK ses akışını seçer:
             video_map = ['-map', '[v]']
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
@@ -254,7 +245,7 @@ def start_m3u_stream():
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
-                '[0:v:best]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:98,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
@@ -264,7 +255,7 @@ def start_m3u_stream():
         else:
             logo_inputs = []
             filter_str = (
-                '[0:v:best]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[main]{title_drawtext}[v]'
             )
