@@ -18,7 +18,7 @@ RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/akasya_duragi_tum_bolumler.m3u"
 LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1788897616425.png"
 
-STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "akasya.json")
+STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_akasya.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -55,7 +55,7 @@ def get_local_state():
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
     else:
-        print(f"ℹ️ Yerel state dosyası bulunamadı, 0'dan başlanıyor.")
+        print(f"ℹ️ Yerel state dosyası bulunamadı ({STATE_FILE_NAME}), 0'dan başlanıyor.")
     return 0, 0, ""
 
 
@@ -97,8 +97,6 @@ def get_m3u_playlist(m3u_url):
 
 def download_logo():
     headers = {'User-Agent': STREAM_USER_AGENT}
-    
-    # 1. Logo İndir
     try:
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
         if response.status_code == 200 and len(response.content) > 0:
@@ -176,10 +174,6 @@ def start_m3u_stream():
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
-        # --- LİNK DEĞİŞİKLİĞİ KONTROLÜ ---
-        # Aynı indeksteki filmin linki, kaldığımız yerden devam ederken değiştiyse
-        # (kullanıcı o filmin linkini güncellediyse), bu artık "yeni" bir video demektir.
-        # Bu yüzden kaldığı saniyeden değil, baştan (0. saniyeden) başlatılır.
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             print(f"🔄 Bu sıradaki ({current_index + 1}) içeriğin linki değişmiş, video baştan başlatılacak.")
             print(f"   Eski link: {last_url}")
@@ -198,7 +192,6 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # --- ÇİFT LİNK (VIDEO + SES SEPARATÖRÜ: ;) VE TEK LİNK KONTROLÜ ---
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -221,7 +214,6 @@ def start_m3u_stream():
             ]
             audio_map = ['-map', '1:a:0']
             logo1_input_index = 2
-            logo2_input_index = 3
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
@@ -231,9 +223,9 @@ def start_m3u_stream():
                 '-re',
                 '-i', target_stream_url
             ]
-            audio_map = ['-map', '0:a?']
+            # Çoklu ses kanallı HLS yayınları için sadece İLK ses akışı seçilir:
+            audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
-            logo2_input_index = 2
 
         print("=" * 60)
 
@@ -242,8 +234,6 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # Sağ üstteki logo kaldırıldı; soldaki logo artık sağ üst köşeye taşındı.
-        # Film adı, sol alt köşede yarı saydam kutu içinde, kalın fontla gösteriliyor.
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
