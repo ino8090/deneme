@@ -185,7 +185,7 @@ def start_m3u_stream():
         write_title_file(film_title)
 
         print("=" * 60)
-        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 30fps - 2000k) Başlatılıyor")
+        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2000k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
@@ -202,28 +202,39 @@ def start_m3u_stream():
 
             input_args = [
                 '-headers', headers_arg,
+                '-m3u8_hold_counters', '1',
+                '-allowed_extensions', 'ALL',
+                '-http_persistent', '0',
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
                 '-re',
                 '-i', video_url,
                 '-headers', headers_arg,
+                '-m3u8_hold_counters', '1',
+                '-allowed_extensions', 'ALL',
+                '-http_persistent', '0',
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
                 '-re',
                 '-i', audio_url
             ]
-            audio_map = ['-map', '1:a:0']
+            video_map = ['-map', '0:v:best']
+            audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
                 '-headers', headers_arg,
+                '-m3u8_hold_counters', '1',
+                '-allowed_extensions', 'ALL',
+                '-http_persistent', '0',
                 '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
                 '-ss', str(last_seconds),
                 '-re',
                 '-i', target_stream_url
             ]
-            # Çoklu ses kanallı HLS yayınları için sadece İLK ses akışı seçilir:
+            # M3U8 listesinden EN İYİ video akışını ve İLK ses akışını seçer:
+            video_map = ['-map', '[v]']
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
@@ -243,7 +254,7 @@ def start_m3u_stream():
         if has_logo1:
             logo_inputs = ['-i', 'logo.png']
             filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                '[0:v:best]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:98,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
@@ -253,7 +264,7 @@ def start_m3u_stream():
         else:
             logo_inputs = []
             filter_str = (
-                '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
+                '[0:v:best]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[main]{title_drawtext}[v]'
             )
@@ -261,25 +272,26 @@ def start_m3u_stream():
         command = [
             'ffmpeg'
         ] + input_args + logo_inputs + [
-            '-filter_complex', filter_str,
-            '-map', '[v]'
-        ] + audio_map + [
+            '-filter_complex', filter_str
+        ] + video_map + audio_map + [
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
-            '-b:v', '3500k',
-            '-maxrate', '3500k',
-            '-bufsize', '4000k',
-            '-g', '60',
+            '-b:v', '2000k',
+            '-maxrate', '2200k',
+            '-bufsize', '3000k',
+            '-g', '50',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ar', '44100',
+            '-flvflags', 'no_duration_filesize',
+            '-rtmp_live', 'live',
             '-f', 'flv',
             RTMP_SERVER
         ]
 
-        print("▶ FFmpeg başlatıldı, 1080p 30fps @ 2000k yayın iletiliyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2000k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
