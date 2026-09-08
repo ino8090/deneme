@@ -237,7 +237,7 @@ def start_m3u_stream():
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=28:"
-            f"x=80:y=main_h-th-50"
+            f"x=50:y=main_h-th-50"
         )
 
         if has_logo1:
@@ -247,7 +247,7 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:98,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-113:50[tmp];'
+                '[main][logo1]overlay=main_w-overlay_w-50:50[tmp];'
                 f'[tmp]{title_drawtext}[v]'
             )
         else:
