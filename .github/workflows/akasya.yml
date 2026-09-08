@@ -32,7 +32,7 @@ jobs:
 
     - name: 🚀 Yayını başlat
       env:
-        STATE_FILE_NAME: "state_aksaya.json"
+        STATE_FILE_NAME: "state_akasya.json"
       run: python -u akasya.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
