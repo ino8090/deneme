@@ -97,8 +97,6 @@ def get_m3u_playlist(m3u_url):
 
 def download_logo():
     headers = {'User-Agent': STREAM_USER_AGENT}
-    
-    # 1. Logo İndir
     try:
         response = requests.get(LOGO_URL, headers=headers, timeout=15)
         if response.status_code == 200 and len(response.content) > 0:
@@ -176,10 +174,6 @@ def start_m3u_stream():
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
-        # --- LİNK DEĞİŞİKLİĞİ KONTROLÜ ---
-        # Aynı indeksteki filmin linki, kaldığımız yerden devam ederken değiştiyse
-        # (kullanıcı o filmin linkini güncellediyse), bu artık "yeni" bir video demektir.
-        # Bu yüzden kaldığı saniyeden değil, baştan (0. saniyeden) başlatılır.
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             print(f"🔄 Bu sıradaki ({current_index + 1}) içeriğin linki değişmiş, video baştan başlatılacak.")
             print(f"   Eski link: {last_url}")
@@ -198,7 +192,7 @@ def start_m3u_stream():
 
         headers_arg = f"User-Agent: {STREAM_USER_AGENT}\r\n"
 
-        # --- ÇİFT LİNK (VIDEO + SES SEPARATÖRÜ: ;) VE TEK LİNK KONTROLÜ ---
+        # --- ÇİFT LİNK VEYA TEK LİNK KONTROLÜ ---
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
             video_url = video_url.strip()
@@ -219,9 +213,9 @@ def start_m3u_stream():
                 '-re',
                 '-i', audio_url
             ]
-            audio_map = ['-map', '1:a:0']
+            # Çift link durumunda ses 2. girdi olan audio_url'den (1:a:0) alınır
+            audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
-            logo2_input_index = 3
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
             input_args = [
@@ -231,9 +225,10 @@ def start_m3u_stream():
                 '-re',
                 '-i', target_stream_url
             ]
-            audio_map = ['-map', '0:a?']
+            # YAPIŞTIRILAN DÜZELTME:
+            # '-map', '0:a?' yerine sadece ILK ses akışını almak için '-map', '0:a:0?' kullanıldı.
+            audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
-            logo2_input_index = 2
 
         print("=" * 60)
 
@@ -242,8 +237,6 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
-        # Sağ üstteki logo kaldırıldı; soldaki logo artık sağ üst köşeye taşındı.
-        # Film adı, sol alt köşede yarı saydam kutu içinde, kalın fontla gösteriliyor.
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
@@ -284,6 +277,7 @@ def start_m3u_stream():
             '-g', '60',
             '-c:a', 'aac',
             '-b:a', '128k',
+            '-ac', '2',
             '-ar', '44100',
             '-f', 'flv',
             RTMP_SERVER
