@@ -28,15 +28,12 @@ GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 STREAM_REFERER = "https://vidmody.com/"
 
-# Logo ve yazı opaklık ayarları
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
-# Video süre önbelleği
 DURATION_CACHE = {}
 
-# Global session (cookie'leri paylaşmak için)
 SESSION = requests.Session()
 SESSION.headers.update({
     'User-Agent': STREAM_USER_AGENT,
@@ -56,7 +53,6 @@ def format_hms(total_seconds):
 
 
 def fetch_cookies_for_stream(stream_url):
-    """VLC gibi: m3u8 URL'sine istek atıp sunucunun verdiği cookie'leri toplar."""
     if not stream_url or not stream_url.startswith('http'):
         return {}
 
@@ -64,13 +60,11 @@ def fetch_cookies_for_stream(stream_url):
     base = f"{parsed.scheme}://{parsed.netloc}/"
 
     try:
-        # 1) Domain'e istek at (cookie set eden sayfa varsa yakala)
         SESSION.get(base, timeout=10, allow_redirects=True)
     except Exception as e:
         print(f"⚠️ Base cookie fetch hatası: {e}")
 
     try:
-        # 2) m3u8 URL'sine istek at (asıl cookie buradan gelir)
         if '.m3u8' in stream_url:
             SESSION.get(stream_url, timeout=10, allow_redirects=True)
     except Exception as e:
@@ -80,15 +74,14 @@ def fetch_cookies_for_stream(stream_url):
 
 
 def build_headers_for(stream_url):
-    """VLC'nin gönderdiği header setini taklit eder."""
     cookies = fetch_cookies_for_stream(stream_url)
     cookie_str = '; '.join([f"{k}={v}" for k, v in cookies.items()])
 
-    # Referer'ı stream domain'ine göre ayarla (vidmody yerine)
     try:
         parsed = urlparse(stream_url)
         ref = f"{parsed.scheme}://{parsed.netloc}/"
     except Exception:
+        parsed = urlparse(STREAM_REFERER)
         ref = STREAM_REFERER
 
     headers = (
@@ -303,10 +296,9 @@ def start_m3u_stream():
         # ---- VLC gibi cookie topla ve header hazırla ----
         headers_arg, stream_referer, cookie_str = build_headers_for(target_stream_url)
 
+        # ---- FFmpeg giriş opsiyonları (uyumlu sürüm) ----
         input_options = [
-            # Header'lar (segment isteklerine de taşınır)
             '-headers', headers_arg,
-            # VLC gibi davran: UA ve Referer ayrıca belirt
             '-user_agent', STREAM_USER_AGENT,
             '-referer', stream_referer,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
@@ -318,10 +310,6 @@ def start_m3u_stream():
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '5',
             '-rw_timeout', '15000000',
-            '-http_persistent', '0',
-            '-multiple_requests', '0',
-            '-follow_redirects', '1',
-            '-seekable', '0',
         ]
 
         if ";" in target_stream_url:
