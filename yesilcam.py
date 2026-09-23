@@ -57,7 +57,8 @@ def get_video_duration(url):
             '-v', 'error',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
-            '-headers', f'User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n',
+            '-user_agent', STREAM_USER_AGENT,
+            '-headers', f'User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\nOrigin: https://vidmody.com\r\n',
             clean_url
         ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
@@ -68,7 +69,6 @@ def get_video_duration(url):
     except Exception:
         pass
     
-    # ffprobe okuyamazsa varsayılan 90 dk (5400 sn) kabul edilir
     return 5400.0
 
 
@@ -81,11 +81,9 @@ def generate_epg(playlist, current_index, current_seconds):
         display_name = ET.SubElement(channel, 'display-name')
         display_name.text = "Tele5"
 
-        # Şimdiki zamandan oynatılan süreyi düşerek başlangıcı bul
         running_time = datetime.now() - timedelta(seconds=current_seconds)
         total_playlist = len(playlist)
 
-        # 24-48 saatlik akış akışı üretmek için listeyi 2 tur döndür
         for i in range(total_playlist * 2):
             idx = (current_index + i) % total_playlist
             item = playlist[idx]
@@ -147,7 +145,7 @@ def get_m3u_playlist(m3u_url):
                 if line.startswith('#EXTINF'):
                     match = re.search(r',(.+)$', line)
                     pending_title = match.group(1).strip() if match else None
-                elif not line.startswith('#') and line.startswith('http'):
+                elif not line.startswith('#') and (line.startswith('http') or line.startswith('https')):
                     title = pending_title or os.path.basename(line.split('?')[0])
                     playlist.append({"url": line, "title": title})
                     pending_title = None
@@ -233,6 +231,16 @@ def start_m3u_stream():
             last_seconds = 0
             last_url = ""
 
+        # 🛑 HLS 403 Hatası Koruması: Üst üste 3 kez hemen koparsa sonraki içeriğe geç
+        if consecutive_fast_failures >= 3:
+            print("⚠️ [Sistem] Bu HLS kaynağı erişim engeli (403) verdi veya erişilemiyor. Sonraki içeriğe atlanıyor...")
+            current_index = (current_index + 1) % len(playlist)
+            last_seconds = 0
+            last_url = ""
+            consecutive_fast_failures = 0
+            update_local_state(current_index, 0, "")
+            continue
+
         current_item = playlist[current_index]
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
@@ -243,21 +251,24 @@ def start_m3u_stream():
         last_url = target_stream_url
         write_title_file(film_title)
 
-        # Yayın başlarken EPG'yi güncelle
         generate_epg(playlist, current_index, last_seconds)
 
+        # HLS / HTTP bağlantı başlıkları
         headers_arg = (
             f"User-Agent: {STREAM_USER_AGENT}\r\n"
-            f"Referer: https://vidmody.com/\r\n"
+            f"Referer: {STREAM_REFERER}\r\n"
             f"Origin: https://vidmody.com\r\n"
         )
 
+        # FFmpeg HLS ve HTTP İyileştirme Ayarları
         input_options = [
+            '-user_agent', STREAM_USER_AGENT,
             '-headers', headers_arg,
+            '-http_persistent', '0',               # HLS segmentlerinde takılmayı önler
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
-            '-analyzeduration', '3000000',
-            '-probesize', '3000000',
+            '-analyzeduration', '10000000',
+            '-probesize', '10000000',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
@@ -271,13 +282,15 @@ def start_m3u_stream():
             audio_url = audio_url.strip()
 
             input_args = (
-                ['-ss', str(last_seconds)] + input_options + ['-i', video_url] +
-                ['-ss', str(last_seconds)] + input_options + ['-i', audio_url]
+                (['-ss', str(last_seconds)] if last_seconds > 0 else []) + input_options + ['-i', video_url] +
+                (['-ss', str(last_seconds)] if last_seconds > 0 else []) + input_options + ['-i', audio_url]
             )
             audio_map = ['-map', '1:a:0?']
             logo_input_index = 2
         else:
-            input_args = ['-ss', str(last_seconds)] + input_options + ['-i', target_stream_url]
+            input_args = (
+                (['-ss', str(last_seconds)] if last_seconds > 0 else []) + input_options + ['-i', target_stream_url]
+            )
             audio_map = ['-map', '0:a:0?']
             logo_input_index = 1
 
@@ -378,7 +391,7 @@ def start_m3u_stream():
 
         if process.returncode == 0:
             print("✅ İçerik bitti, sıradakine geçiliyor.")
-            current_index += 1
+            current_index = (current_index + 1) % len(playlist)
             last_seconds = 0
             last_url = ""
             update_local_state(current_index, 0, "")
@@ -389,11 +402,13 @@ def start_m3u_stream():
                 print("🧾 FFmpeg son log satırları:")
                 for tail_line in stderr_tail:
                     print(f"   {tail_line}")
+            
             duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
             else:
                 consecutive_fast_failures = 0
+                
             last_seconds = current_stream_seconds
             last_url = target_stream_url
             update_local_state(current_index, last_seconds, last_url)
