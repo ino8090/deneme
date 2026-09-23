@@ -11,7 +11,6 @@ import requests
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from collections import deque
-from urllib.parse import urlparse
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
@@ -28,23 +27,17 @@ GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
 STREAM_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 STREAM_REFERER = "https://vidmody.com/"
 
+# Logo ve yazı opaklık ayarları
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# Video süre önbelleği
 DURATION_CACHE = {}
-
-SESSION = requests.Session()
-SESSION.headers.update({
-    'User-Agent': STREAM_USER_AGENT,
-    'Referer': STREAM_REFERER,
-    'Origin': 'https://vidmody.com',
-    'Accept': '*/*',
-    'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
-})
 
 
 def format_hms(total_seconds):
+    """Saniyeyi SS:DD:SS formatına çevirir."""
     total_seconds = int(total_seconds)
     hrs = total_seconds // 3600
     mins = (total_seconds % 3600) // 60
@@ -52,80 +45,35 @@ def format_hms(total_seconds):
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
 
 
-def fetch_cookies_for_stream(stream_url):
-    if not stream_url or not stream_url.startswith('http'):
-        return {}
-
-    parsed = urlparse(stream_url)
-    base = f"{parsed.scheme}://{parsed.netloc}/"
-
-    try:
-        SESSION.get(base, timeout=10, allow_redirects=True)
-    except Exception as e:
-        print(f"⚠️ Base cookie fetch hatası: {e}")
-
-    try:
-        if '.m3u8' in stream_url:
-            SESSION.get(stream_url, timeout=10, allow_redirects=True)
-    except Exception as e:
-        print(f"⚠️ M3U8 cookie fetch hatası: {e}")
-
-    return SESSION.cookies.get_dict()
-
-
-def build_headers_for(stream_url):
-    cookies = fetch_cookies_for_stream(stream_url)
-    cookie_str = '; '.join([f"{k}={v}" for k, v in cookies.items()])
-
-    try:
-        parsed = urlparse(stream_url)
-        ref = f"{parsed.scheme}://{parsed.netloc}/"
-    except Exception:
-        parsed = urlparse(STREAM_REFERER)
-        ref = STREAM_REFERER
-
-    headers = (
-        f"User-Agent: {STREAM_USER_AGENT}\r\n"
-        f"Referer: {ref}\r\n"
-        f"Origin: {parsed.scheme}://{parsed.netloc}\r\n"
-        f"Accept: */*\r\n"
-        f"Accept-Language: tr-TR,tr;q=0.9,en;q=0.8\r\n"
-    )
-    if cookie_str:
-        headers += f"Cookie: {cookie_str}\r\n"
-        print(f"🍪 Cookie bulundu: {cookie_str[:80]}{'...' if len(cookie_str) > 80 else ''}")
-
-    return headers, ref, cookie_str
-
-
 def get_video_duration(url):
+    """ffprobe kullanarak video süresini saniye cinsinden çeker."""
     if url in DURATION_CACHE:
         return DURATION_CACHE[url]
-
+    
     clean_url = url.split(";")[0].strip() if ";" in url else url
-    headers_arg, _, _ = build_headers_for(clean_url)
-
     try:
         cmd = [
             'ffprobe',
             '-v', 'error',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
-            '-headers', headers_arg,
+            '-headers', f'User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\n',
             clean_url
         ]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
         duration = float(result.stdout.strip())
         if duration > 0:
             DURATION_CACHE[url] = duration
             return duration
     except Exception:
         pass
-
+    
+    # ffprobe okuyamazsa varsayılan 90 dk (5400 sn) kabul edilir
     return 5400.0
 
 
 def generate_epg(playlist, current_index, current_seconds):
+    """M3U listesinden XMLTV EPG dosyası üretir."""
     try:
         tv = ET.Element('tv', generator_info_name="Tele5 EPG Generator")
 
@@ -133,9 +81,11 @@ def generate_epg(playlist, current_index, current_seconds):
         display_name = ET.SubElement(channel, 'display-name')
         display_name.text = "Tele5"
 
+        # Şimdiki zamandan oynatılan süreyi düşerek başlangıcı bul
         running_time = datetime.now() - timedelta(seconds=current_seconds)
         total_playlist = len(playlist)
 
+        # 24-48 saatlik akış akışı üretmek için listeyi 2 tur döndür
         for i in range(total_playlist * 2):
             idx = (current_index + i) % total_playlist
             item = playlist[idx]
@@ -184,7 +134,8 @@ def update_local_state(index, seconds, url=""):
 
 def get_m3u_playlist(m3u_url):
     try:
-        response = SESSION.get(m3u_url, timeout=15)
+        headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER}
+        response = requests.get(m3u_url, headers=headers, timeout=15)
         if response.status_code == 200:
             lines = response.text.splitlines()
             playlist = []
@@ -207,8 +158,9 @@ def get_m3u_playlist(m3u_url):
 
 
 def download_logo():
+    headers = {'User-Agent': STREAM_USER_AGENT}
     try:
-        response = SESSION.get(LOGO_URL, timeout=15)
+        response = requests.get(LOGO_URL, headers=headers, timeout=15)
         if response.status_code == 200 and len(response.content) > 0:
             with open('logo.png', 'wb') as f:
                 f.write(response.content)
@@ -291,16 +243,17 @@ def start_m3u_stream():
         last_url = target_stream_url
         write_title_file(film_title)
 
+        # Yayın başlarken EPG'yi güncelle
         generate_epg(playlist, current_index, last_seconds)
 
-        # ---- VLC gibi cookie topla ve header hazırla ----
-        headers_arg, stream_referer, cookie_str = build_headers_for(target_stream_url)
+        headers_arg = (
+            f"User-Agent: {STREAM_USER_AGENT}\r\n"
+            f"Referer: https://vidmody.com/\r\n"
+            f"Origin: https://vidmody.com\r\n"
+        )
 
-        # ---- FFmpeg giriş opsiyonları (uyumlu sürüm) ----
         input_options = [
             '-headers', headers_arg,
-            '-user_agent', STREAM_USER_AGENT,
-            '-referer', stream_referer,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
             '-analyzeduration', '3000000',
@@ -309,7 +262,7 @@ def start_m3u_stream():
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '5',
-            '-rw_timeout', '15000000',
+            '-rw_timeout', '15000000'
         ]
 
         if ";" in target_stream_url:
@@ -361,7 +314,6 @@ def start_m3u_stream():
 
         command = [
             'ffmpeg',
-            '-loglevel', 'warning',
             '-re'
         ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
