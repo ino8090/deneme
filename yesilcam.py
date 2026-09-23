@@ -240,6 +240,16 @@ def start_m3u_stream():
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             last_seconds = 0
 
+        # === BİTİŞ SINIRI KONTROLÜ (KİLİTLENMEYİ ÖNLER) ===
+        video_duration = get_video_duration(target_stream_url)
+        if video_duration > 0 and last_seconds > 0 and (video_duration - last_seconds) < 15:
+            print(f"ℹ️ Film bitti/bitiş sınırında ({format_hms(last_seconds)} / {format_hms(video_duration)}). Sonraki içeriğe geçiliyor.")
+            current_index += 1
+            last_seconds = 0
+            last_url = ""
+            update_local_state(current_index, 0, "")
+            continue
+
         last_url = target_stream_url
         write_title_file(film_title)
 
@@ -256,6 +266,7 @@ def start_m3u_stream():
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
+            '-fflags', '+genpts+discardcorrupt',
             '-analyzeduration', '3000000',
             '-probesize', '3000000',
             '-reconnect', '1',
@@ -384,16 +395,29 @@ def start_m3u_stream():
             update_local_state(current_index, 0, "")
             consecutive_fast_failures = 0
         else:
-            print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
+            print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Kontrol ediliyor...")
+            
+            # Eğer hata aldığı anda video süresinin sonundaysa otomatik sonraki videoya geç
+            if video_duration > 0 and (video_duration - current_stream_seconds) < 15:
+                print("ℹ️ Çökme video bitiş sınırında gerçekleşti. Sonraki içeriğe atlanıyor.")
+                current_index += 1
+                last_seconds = 0
+                last_url = ""
+                update_local_state(current_index, 0, "")
+                consecutive_fast_failures = 0
+                continue
+
             if stderr_tail:
                 print("🧾 FFmpeg son log satırları:")
                 for tail_line in stderr_tail:
                     print(f"   {tail_line}")
+            
             duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
             else:
                 consecutive_fast_failures = 0
+            
             last_seconds = current_stream_seconds
             last_url = target_stream_url
             update_local_state(current_index, last_seconds, last_url)
