@@ -18,7 +18,7 @@ STREAM_KEY = os.getenv("STREAM_KEY") or "0212tv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/prasss.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/file_000000001218821086dc1a6d6539a2b9.png"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1790197529120.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "state_yesilcam.json")
 EPG_FILE_NAME = "epg.xml"
@@ -301,8 +301,8 @@ def start_m3u_stream():
         font_str = f":fontfile='{BOLD_FONT_PATH}'" if has_font else ""
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1{font_str}:"
-            f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
-            f"x=80:y=main_h-th-67"
+            f"fontcolor=white@{TEXT_OPACITY}:fontsize=26:"
+            f"x=80:y=main_h-th-55"
         )
 
         if has_logo:
