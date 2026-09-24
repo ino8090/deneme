@@ -200,11 +200,12 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # FFmpeg kilitlenmesini engelleyen hızlı bağlantı ve atlama ayarları
+        # FFmpeg kilitlenmesini ve Assertion paket çökmelerini engelleyen düzeltilmiş ayarlar
         input_options = [
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
+            '-fflags', '+genpts+discardcorrupt',  # Bozuk PTS/DTS paketlerini otomatik atlar/düzeltir
             '-analyzeduration', '2000000',
             '-probesize', '2000000',
             '-reconnect', '1',
@@ -222,7 +223,6 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
-            # -ss parametreleri en başa çekilerek doğrudan hedeflenen segmentten indirme yapılması sağlandı
             input_args = (
                 ['-ss', str(last_seconds)] + input_options + ['-i', video_url] +
                 ['-ss', str(last_seconds)] + input_options + ['-i', audio_url]
@@ -347,9 +347,19 @@ def start_m3u_stream():
                 consecutive_fast_failures += 1
             else:
                 consecutive_fast_failures = 0
-            last_seconds = current_stream_seconds
-            last_url = target_stream_url
-            update_local_state(current_index, last_seconds, last_url)
+
+            # 5 kere üst üste hızlı çökme yaşanırsa videoyu atla (sonsuz döngü engelleme)
+            if consecutive_fast_failures >= 5:
+                print(f"❌ {film_title} içeriğinde sürekli dekoder hatası alındı. Bu video atlanıp sıradakine geçiliyor...")
+                current_index += 1
+                last_seconds = 0
+                last_url = ""
+                consecutive_fast_failures = 0
+                update_local_state(current_index, 0, "")
+            else:
+                last_seconds = current_stream_seconds
+                last_url = target_stream_url
+                update_local_state(current_index, last_seconds, last_url)
 
         if consecutive_fast_failures > 0:
             retry_delay = min(5 * (2 ** consecutive_fast_failures), MAX_RETRY_DELAY_SECONDS)
