@@ -8,6 +8,7 @@ import os
 import re
 import json
 import requests
+import threading
 from collections import deque
 
 # ===================== AYARLAR =====================
@@ -31,6 +32,11 @@ BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/D
 
 # Decoder'ı tek thread'e zorlamak için (bkz: "Assertion pkt failed at ffmpeg_dec.c" hatası)
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
+
+# Watchdog: bu kadar saniye boyunca FFmpeg'den ilerleme (time=) gelmezse
+# süreç donmuş kabul edilip zorla sonlandırılır (RTMP çıkışı tıkanması gibi
+# durumlarda FFmpeg process'i çökmeden sonsuza kadar donuk kalabiliyor).
+WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
 
 
 def format_hms(total_seconds):
@@ -209,7 +215,13 @@ def start_m3u_stream():
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
-            '-fflags', '+genpts+discardcorrupt+nobuffer',
+            # "nobuffer" kaldırıldı: kaynak canlı yayın değil, dosya indirme (VOD).
+            # nobuffer iç tamponlamayı kapatıp ağdaki ufak yavaşlamaları bile
+            # anlık donmaya çeviriyordu.
+            '-fflags', '+genpts+discardcorrupt',
+            # Ağdan okuma ile decode arasındaki paket kuyruğunu büyütüyoruz;
+            # küçük kuyruk ağ jitter'ında decode'u anlık durduruyordu.
+            '-thread_queue_size', '1024',
             '-max_interleave_delta', '0',
             '-analyzeduration', '5000000',
             '-probesize', '5000000',
@@ -310,6 +322,24 @@ def start_m3u_stream():
         current_stream_seconds = last_seconds
         stderr_tail = deque(maxlen=40)
 
+        # Watchdog: ilerleme (time=) gelmemesi durumunda süreci öldürür.
+        last_progress_time = [time.time()]
+
+        def _watchdog(proc=process, progress_ref=last_progress_time):
+            while proc.poll() is None:
+                time.sleep(5)
+                if time.time() - progress_ref[0] > WATCHDOG_TIMEOUT_SECONDS:
+                    print(f"🚨 Watchdog: {WATCHDOG_TIMEOUT_SECONDS} saniyedir ilerleme yok, "
+                          f"FFmpeg donmuş görünüyor. Süreç zorla sonlandırılıyor.")
+                    try:
+                        proc.kill()
+                    except Exception as e:
+                        print(f"⚠️ Watchdog süreç sonlandırma hatası: {e}")
+                    break
+
+        watchdog_thread = threading.Thread(target=_watchdog, daemon=True)
+        watchdog_thread.start()
+
         while True:
             line = process.stderr.readline()
             if not line and process.poll() is not None:
@@ -326,6 +356,7 @@ def start_m3u_stream():
                     current_stream_seconds = last_seconds + played_seconds
 
                     now = time.time()
+                    last_progress_time[0] = now
 
                     if now - last_save_time > 30:
                         update_local_state(current_index, current_stream_seconds, target_stream_url)
@@ -347,6 +378,8 @@ def start_m3u_stream():
         else:
             if process.returncode == -6:
                 print("⚠️ FFmpeg SIGABRT (decoder assertion) ile çöktü — bilinen bir FFmpeg iç hatası olabilir.")
+            elif process.returncode == -9:
+                print("⚠️ FFmpeg watchdog tarafından donma nedeniyle sonlandırıldı (muhtemelen RTMP çıkışı tıkandı).")
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
             if stderr_tail:
                 print("🧾 FFmpeg son log satırları:")
