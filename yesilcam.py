@@ -200,14 +200,15 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # FFmpeg kilitlenmesini ve Assertion paket çökmelerini engelleyen düzeltilmiş ayarlar
+        # Assertion hatasını engelleyen bağlantı ve demuxer bayrakları
         input_options = [
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
-            '-fflags', '+genpts+discardcorrupt',  # Bozuk PTS/DTS paketlerini otomatik atlar/düzeltir
-            '-analyzeduration', '2000000',
-            '-probesize', '2000000',
+            '-fflags', '+genpts+discardcorrupt+nobuffer',
+            '-max_interleave_delta', '0',
+            '-analyzeduration', '5000000',
+            '-probesize', '5000000',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
@@ -224,14 +225,15 @@ def start_m3u_stream():
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
             input_args = (
-                ['-ss', str(last_seconds)] + input_options + ['-i', video_url] +
-                ['-ss', str(last_seconds)] + input_options + ['-i', audio_url]
+                input_options + ['-ss', str(last_seconds), '-i', video_url] +
+                input_options + ['-ss', str(last_seconds), '-i', audio_url]
             )
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            input_args = ['-ss', str(last_seconds)] + input_options + ['-i', target_stream_url]
+            # -ss parametresi -i öncesine konup genpts bayraklarıyla desteklendi
+            input_args = input_options + ['-ss', str(last_seconds), '-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
@@ -342,15 +344,16 @@ def start_m3u_stream():
                 for tail_line in stderr_tail:
                     print(f"   {tail_line}")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
+            
             duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
             else:
                 consecutive_fast_failures = 0
 
-            # 5 kere üst üste hızlı çökme yaşanırsa videoyu atla (sonsuz döngü engelleme)
-            if consecutive_fast_failures >= 5:
-                print(f"❌ {film_title} içeriğinde sürekli dekoder hatası alındı. Bu video atlanıp sıradakine geçiliyor...")
+            # 3 kere üst üste hızlı çökme yaşanırsa videoyu atla (sonsuz döngüyü önleme)
+            if consecutive_fast_failures >= 3:
+                print(f"❌ {film_title} akışı sürekli dekoder hatası verdi. Sonraki içeriğe geçiliyor...")
                 current_index += 1
                 last_seconds = 0
                 last_url = ""
