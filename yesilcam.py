@@ -29,6 +29,9 @@ LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# Decoder'ı tek thread'e zorlamak için (bkz: "Assertion pkt failed at ffmpeg_dec.c" hatası)
+DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
+
 
 def format_hms(total_seconds):
     """Saniyeyi SS:DD:SS formatına çevirir."""
@@ -154,6 +157,7 @@ def start_m3u_stream():
     print(f"🔧 Kullanılan Logo 1: {LOGO_URL}")
     print(f"🔧 State dosyası    : {STATE_FILE_NAME}")
     print(f"🔧 RTMP hedefi      : {RTMP_SERVER}")
+    print(f"🔧 Decoder thread   : {DECODER_THREADS}")
 
     download_logo()
 
@@ -213,7 +217,10 @@ def start_m3u_stream():
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '2',
-            '-rw_timeout', '10000000'
+            '-rw_timeout', '10000000',
+            # "Assertion pkt failed at ffmpeg_dec.c" crash'ini önlemek için
+            # decoder'ı tek thread'e zorluyoruz (yeni FFmpeg'lerdeki bilinen bir hata)
+            '-threads', DECODER_THREADS,
         ]
 
         if ";" in target_stream_url:
@@ -338,13 +345,15 @@ def start_m3u_stream():
             update_local_state(current_index, 0, "")
             consecutive_fast_failures = 0
         else:
+            if process.returncode == -6:
+                print("⚠️ FFmpeg SIGABRT (decoder assertion) ile çöktü — bilinen bir FFmpeg iç hatası olabilir.")
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Aynı saniyeden tekrar denenecek.")
             if stderr_tail:
                 print("🧾 FFmpeg son log satırları:")
                 for tail_line in stderr_tail:
                     print(f"   {tail_line}")
             write_step_summary(film_title, current_index, len(playlist), current_stream_seconds, status="🔴 Bağlantı koptu, tekrar denenecek")
-            
+
             duration_this_attempt = current_stream_seconds - last_seconds
             if duration_this_attempt < FAST_FAIL_THRESHOLD_SECONDS:
                 consecutive_fast_failures += 1
