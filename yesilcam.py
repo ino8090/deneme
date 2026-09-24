@@ -68,7 +68,6 @@ def get_video_duration(url):
     except Exception:
         pass
     
-    # ffprobe okuyamazsa varsayılan 90 dk (5400 sn) kabul edilir
     return 5400.0
 
 
@@ -81,11 +80,9 @@ def generate_epg(playlist, current_index, current_seconds):
         display_name = ET.SubElement(channel, 'display-name')
         display_name.text = "Tele5"
 
-        # Şimdiki zamandan oynatılan süreyi düşerek başlangıcı bul
         running_time = datetime.now() - timedelta(seconds=current_seconds)
         total_playlist = len(playlist)
 
-        # 24-48 saatlik akış akışı üretmek için listeyi 2 tur döndür
         for i in range(total_playlist * 2):
             idx = (current_index + i) % total_playlist
             item = playlist[idx]
@@ -240,7 +237,7 @@ def start_m3u_stream():
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             last_seconds = 0
 
-        # === BİTİŞ SINIRI KONTROLÜ (KİLİTLENMEYİ ÖNLER) ===
+        # === BİTİŞ SINIRI KONTROLÜ ===
         video_duration = get_video_duration(target_stream_url)
         if video_duration > 0 and last_seconds > 0 and (video_duration - last_seconds) < 15:
             print(f"ℹ️ Film bitti/bitiş sınırında ({format_hms(last_seconds)} / {format_hms(video_duration)}). Sonraki içeriğe geçiliyor.")
@@ -253,7 +250,6 @@ def start_m3u_stream():
         last_url = target_stream_url
         write_title_file(film_title)
 
-        # Yayın başlarken EPG'yi güncelle
         generate_epg(playlist, current_index, last_seconds)
 
         headers_arg = (
@@ -262,18 +258,21 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
+        # === DONMA ENGELLEME KİTİ (GİRDİ PARAMETRELERİ) ===
         input_options = [
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
-            '-fflags', '+genpts+discardcorrupt',
-            '-analyzeduration', '3000000',
-            '-probesize', '3000000',
+            '-fflags', '+genpts+discardcorrupt+nobuffer',
+            '-buffer_size', '15M',          # 15MB Girdi Arabelleği (Ağ takılmalarını yutar)
+            '-max_delay', '500000',          # Maksimum paket gecikmesi toleransı
+            '-analyzeduration', '5000000',
+            '-probesize', '5000000',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '5',
-            '-rw_timeout', '15000000'
+            '-reconnect_delay_max', '2',     # Kopma olursa en fazla 2 sn içinde tekrar bağlanır
+            '-rw_timeout', '10000000'        # 10 saniye yanıt gelmezse zaman aşımına uğrat
         ]
 
         if ";" in target_stream_url:
@@ -323,32 +322,35 @@ def start_m3u_stream():
                 f'[main]{title_drawtext}[v]'
             )
 
+        # === AKICI YAYIN İÇİN FFmpeg ENKODER PARAMETRELERİ ===
         command = [
             'ffmpeg',
-            '-re'
+            '-re'                            # Gerçek zamanlı okuma hızı (Canlı yayın için zorunlu)
         ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
             '-c:v', 'libx264',
-            '-preset', 'superfast',
-            '-tune', 'zerolatency',
+            '-preset', 'ultrafast',           # İşlemci yükünü en aza indirerek takılmayı önler
+            '-tune', 'zerolatency',           # Sıfır gecikme modu
+            '-threads', '2',                  # Thread çakışmalarını ve takılmayı önler
             '-pix_fmt', 'yuv420p',
             '-r', '25',
-            '-b:v', '1500k',
-            '-maxrate', '1500k',
-            '-bufsize', '5000k',
-            '-g', '50',
+            '-g', '50',                       # 2 saniyede bir Keyframe gönder (25 fps * 2)
+            '-keyint_min', '50',              # Sabit Keyframe aralığı
+            '-b:v', '1800k',                  # Stabil Bitrate
+            '-maxrate', '1800k',
+            '-bufsize', '3600k',              # Bitrate patlamalarını engelleyen VBR buffer
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ac', '2',
             '-ar', '44100',
-            '-max_muxing_queue_size', '1024',
+            '-max_muxing_queue_size', '2048', # Paket birikmelerinde taşmayı önler
             '-f', 'flv',
             RTMP_SERVER
         ]
 
-        print("▶ FFmpeg başlatıldı...")
+        print("▶ FFmpeg akıcı yayın modunda başlatıldı...")
 
         process = subprocess.Popen(
             command,
@@ -397,7 +399,6 @@ def start_m3u_stream():
         else:
             print(f"⚠️ Yayın koptu (Return Code: {process.returncode}). Kontrol ediliyor...")
             
-            # Eğer hata aldığı anda video süresinin sonundaysa otomatik sonraki videoya geç
             if video_duration > 0 and (video_duration - current_stream_seconds) < 15:
                 print("ℹ️ Çökme video bitiş sınırında gerçekleşti. Sonraki içeriğe atlanıyor.")
                 current_index += 1
