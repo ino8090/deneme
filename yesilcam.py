@@ -50,7 +50,7 @@ def get_video_duration(url):
     if url in DURATION_CACHE:
         return DURATION_CACHE[url]
     
-    clean_url = url.split(";")[0].strip() if ";" in url else url
+    clean_url = url.split("#")[0].split(";")[0].strip()
     try:
         cmd = [
             'ffprobe',
@@ -145,8 +145,10 @@ def get_m3u_playlist(m3u_url):
                     match = re.search(r',(.+)$', line)
                     pending_title = match.group(1).strip() if match else None
                 elif not line.startswith('#') and line.startswith('http'):
-                    title = pending_title or os.path.basename(line.split('?')[0])
-                    playlist.append({"url": line, "title": title})
+                    # URL sonundaki olası etiketleri ve boşlukları temizle
+                    clean_line = line.split('#')[0].strip()
+                    title = pending_title or os.path.basename(clean_line.split('?')[0])
+                    playlist.append({"url": clean_line, "title": title})
                     pending_title = None
             return playlist
     except Exception as e:
@@ -237,7 +239,7 @@ def start_m3u_stream():
         if last_seconds > 0 and last_url and target_stream_url != last_url:
             last_seconds = 0
 
-        # === BİTİŞ SINIRI KONTROLÜ ===
+        # Video süre kontrolü
         video_duration = get_video_duration(target_stream_url)
         if video_duration > 0 and last_seconds > 0 and (video_duration - last_seconds) < 15:
             print(f"ℹ️ Film bitti/bitiş sınırında ({format_hms(last_seconds)} / {format_hms(video_duration)}). Sonraki içeriğe geçiliyor.")
@@ -258,21 +260,19 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # === DONMA ENGELLEME KİTİ (GİRDİ PARAMETRELERİ) ===
+        # Girdi seçenekleri (buffer_size kaldırıldı, takılma önleyici HTTP opsiyonları eklendi)
         input_options = [
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
             '-fflags', '+genpts+discardcorrupt+nobuffer',
-            '-buffer_size', '15M',          # 15MB Girdi Arabelleği (Ağ takılmalarını yutar)
-            '-max_delay', '500000',          # Maksimum paket gecikmesi toleransı
             '-analyzeduration', '5000000',
             '-probesize', '5000000',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '2',     # Kopma olursa en fazla 2 sn içinde tekrar bağlanır
-            '-rw_timeout', '10000000'        # 10 saniye yanıt gelmezse zaman aşımına uğrat
+            '-reconnect_delay_max', '2',
+            '-rw_timeout', '10000000'
         ]
 
         if ";" in target_stream_url:
@@ -322,30 +322,29 @@ def start_m3u_stream():
                 f'[main]{title_drawtext}[v]'
             )
 
-        # === AKICI YAYIN İÇİN FFmpeg ENKODER PARAMETRELERİ ===
         command = [
             'ffmpeg',
-            '-re'                            # Gerçek zamanlı okuma hızı (Canlı yayın için zorunlu)
+            '-re'
         ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
             '-c:v', 'libx264',
-            '-preset', 'ultrafast',           # İşlemci yükünü en aza indirerek takılmayı önler
-            '-tune', 'zerolatency',           # Sıfır gecikme modu
-            '-threads', '2',                  # Thread çakışmalarını ve takılmayı önler
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-threads', '2',
             '-pix_fmt', 'yuv420p',
             '-r', '25',
-            '-g', '50',                       # 2 saniyede bir Keyframe gönder (25 fps * 2)
-            '-keyint_min', '50',              # Sabit Keyframe aralığı
-            '-b:v', '1800k',                  # Stabil Bitrate
+            '-g', '50',
+            '-keyint_min', '50',
+            '-b:v', '1800k',
             '-maxrate', '1800k',
-            '-bufsize', '3600k',              # Bitrate patlamalarını engelleyen VBR buffer
+            '-bufsize', '3600k',
             '-c:a', 'aac',
             '-b:a', '128k',
             '-ac', '2',
             '-ar', '44100',
-            '-max_muxing_queue_size', '2048', # Paket birikmelerinde taşmayı önler
+            '-max_muxing_queue_size', '2048',
             '-f', 'flv',
             RTMP_SERVER
         ]
