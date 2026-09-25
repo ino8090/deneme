@@ -33,9 +33,7 @@ BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/D
 # Decoder'ı tek thread'e zorlamak için (bkz: "Assertion pkt failed at ffmpeg_dec.c" hatası)
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 
-# Watchdog: bu kadar saniye boyunca FFmpeg'den ilerleme (time=) gelmezse
-# süreç donmuş kabul edilip zorla sonlandırılır (RTMP çıkışı tıkanması gibi
-# durumlarda FFmpeg process'i çökmeden sonsuza kadar donuk kalabiliyor).
+# Watchdog: bu kadar saniye boyunca FFmpeg'den ilerleme (time=) gelmezse süreç donmuş kabul edilir.
 WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
 
 
@@ -210,30 +208,27 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # Assertion hatasını engelleyen bağlantı ve demuxer bayrakları
+        # Gerçek zamanlı okuma (-re) ve kararlı ağ bağlantısı parametreleri
         input_options = [
+            '-re',  # GERÇEK ZAMANLI OKUMA (Yayının takılmasını ve donmasını engeller)
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
-            # "nobuffer" kaldırıldı: kaynak canlı yayın değil, dosya indirme (VOD).
-            # nobuffer iç tamponlamayı kapatıp ağdaki ufak yavaşlamaları bile
-            # anlık donmaya çeviriyordu.
             '-fflags', '+genpts+discardcorrupt',
-            # Ağdan okuma ile decode arasındaki paket kuyruğunu büyütüyoruz;
-            # küçük kuyruk ağ jitter'ında decode'u anlık durduruyordu.
             '-thread_queue_size', '1024',
             '-max_interleave_delta', '0',
-            '-analyzeduration', '5000000',
-            '-probesize', '5000000',
+            '-analyzeduration', '10000000',
+            '-probesize', '10000000',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '2',
+            '-reconnect_delay_max', '10',
             '-rw_timeout', '10000000',
-            # "Assertion pkt failed at ffmpeg_dec.c" crash'ini önlemek için
-            # decoder'ı tek thread'e zorluyoruz (yeni FFmpeg'lerdeki bilinen bir hata)
             '-threads', DECODER_THREADS,
         ]
+
+        # Sadece süre 0'dan büyükse -ss (atlama) parametresi eklenir
+        seek_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
         if ";" in target_stream_url:
             video_url, audio_url = target_stream_url.split(";", 1)
@@ -244,15 +239,14 @@ def start_m3u_stream():
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
             input_args = (
-                input_options + ['-ss', str(last_seconds), '-i', video_url] +
-                input_options + ['-ss', str(last_seconds), '-i', audio_url]
+                input_options + seek_args + ['-i', video_url] +
+                input_options + seek_args + ['-i', audio_url]
             )
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            # -ss parametresi -i öncesine konup genpts bayraklarıyla desteklendi
-            input_args = input_options + ['-ss', str(last_seconds), '-i', target_stream_url]
+            input_args = input_options + seek_args + ['-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
