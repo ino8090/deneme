@@ -197,7 +197,7 @@ def start_m3u_stream():
         write_title_file(film_title)
 
         print("=" * 60)
-        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k + Dolby Atmos Efekti) Başlatılıyor")
+        print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
         print(f"🎬 Oynatılan İçerik  : {film_title}")
         print(f"⏱️ Başlangıç Saniyesi: {last_seconds}")
         print(f"🚀 Hedef RTMP       : {RTMP_SERVER}")
@@ -208,8 +208,9 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
+        # Gerçek zamanlı okuma (-re) ve kararlı ağ bağlantısı parametreleri
         input_options = [
-            '-re',
+            '-re',  # GERÇEK ZAMANLI OKUMA (Yayının takılmasını ve donmasını engeller)
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
@@ -226,6 +227,7 @@ def start_m3u_stream():
             '-threads', DECODER_THREADS,
         ]
 
+        # Sadece süre 0'dan büyükse -ss (atlama) parametresi eklenir
         seek_args = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
         if ";" in target_stream_url:
@@ -279,16 +281,12 @@ def start_m3u_stream():
                 f'[main]{title_drawtext}[v]'
             )
 
-        # 🎛️ SİNEMATİK SES FİLTRESİ (bs2b seçeneği fcut=700:feed=30 olarak düzeltildi)
-        audio_filter = "highpass=f=20,lowpass=f=18000,bs2b=fcut=700:feed=30,stereowiden=delay=20:feedback=0.3:crossfeed=0.3:drymix=0.8,loudnorm=I=-16:TP=-1.5:LRA=11"
-
         command = [
             'ffmpeg'
         ] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
-            '-af', audio_filter,     # Düzeltilmiş Sanal Atmos & Loudnorm Filtresi
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
@@ -298,14 +296,14 @@ def start_m3u_stream():
             '-bufsize', '3000k',
             '-g', '50',
             '-c:a', 'aac',
-            '-b:a', '320k',           # Yüksek ses kalitesi (320 kbps)
+            '-b:a', '128k',
             '-ac', '2',
-            '-ar', '48000',           # Sinema ve TV yayın standardı (48 kHz)
+            '-ar', '44100',
             '-f', 'flv',
             RTMP_SERVER
         ]
 
-        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k + Sinematik Ses ile aktarılıyor...")
+        print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
@@ -318,6 +316,7 @@ def start_m3u_stream():
         current_stream_seconds = last_seconds
         stderr_tail = deque(maxlen=40)
 
+        # Watchdog: ilerleme (time=) gelmemesi durumunda süreci öldürür.
         last_progress_time = [time.time()]
 
         def _watchdog(proc=process, progress_ref=last_progress_time):
@@ -388,6 +387,7 @@ def start_m3u_stream():
             else:
                 consecutive_fast_failures = 0
 
+            # 3 kere üst üste hızlı çökme yaşanırsa videoyu atla (sonsuz döngüyü önleme)
             if consecutive_fast_failures >= 3:
                 print(f"❌ {film_title} akışı sürekli dekoder hatası verdi. Sonraki içeriğe geçiliyor...")
                 current_index += 1
