@@ -279,8 +279,8 @@ def start_m3u_stream():
                 f'[main]{title_drawtext}[v]'
             )
 
-        # 🎛️ PROFESYONEL / SINEMATIK DOLBY ATMOS SİMÜLASYONU SES FİLTRESİ
-        audio_filter = "highpass=f=20,lowpass=f=18000,bs2b=f=700,stereowiden=delay=20:feedback=0.3:crossfeed=0.3:drymix=0.8,loudnorm=I=-16:TP=-1.5:LRA=11"
+        # 🎛️ SİNEMATİK SES FİLTRESİ (bs2b seçeneği fcut=700:feed=30 olarak düzeltildi)
+        audio_filter = "highpass=f=20,lowpass=f=18000,bs2b=fcut=700:feed=30,stereowiden=delay=20:feedback=0.3:crossfeed=0.3:drymix=0.8,loudnorm=I=-16:TP=-1.5:LRA=11"
 
         command = [
             'ffmpeg'
@@ -288,7 +288,7 @@ def start_m3u_stream():
             '-filter_complex', filter_str,
             '-map', '[v]'
         ] + audio_map + [
-            '-af', audio_filter,     # Sanal Dolby Atmos & Ses Normalize Filtresi
+            '-af', audio_filter,     # Düzeltilmiş Sanal Atmos & Loudnorm Filtresi
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-pix_fmt', 'yuv420p',
@@ -325,7 +325,7 @@ def start_m3u_stream():
                 time.sleep(5)
                 if time.time() - progress_ref[0] > WATCHDOG_TIMEOUT_SECONDS:
                     print(f"🚨 Watchdog: {WATCHDOG_TIMEOUT_SECONDS} saniyedir ilerleme yok, "
-                          f"FFmpeg donmuş görünüyor. Süreç zorla sonlandırlandırılıyor.")
+                          f"FFmpeg donmuş görünüyor. Süreç zorla sonlandırılıyor.")
                     try:
                         proc.kill()
                     except Exception as e:
