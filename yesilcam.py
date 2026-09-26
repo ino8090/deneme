@@ -36,6 +36,10 @@ DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
 # Watchdog: bu kadar saniye boyunca FFmpeg'den ilerleme (time=) gelmezse süreç donmuş kabul edilir.
 WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
 
+# Link değişip de aynı film olduğu tespit edildiğinde, senkron güvenliği için
+# kaldığı saniyeden kaç saniye geriden devam edileceği.
+LINK_CHANGE_REWIND_SECONDS = int(os.getenv("LINK_CHANGE_REWIND_SECONDS", "15"))
+
 
 def format_hms(total_seconds):
     """Saniyeyi SS:DD:SS formatına çevirir."""
@@ -47,30 +51,38 @@ def format_hms(total_seconds):
 
 
 def get_local_state():
-    """Yerel state dosyasından son durumu okur (indeks, saniye, o an oynayan linkin URL'si)."""
+    """Yerel state dosyasından son durumu okur
+    (indeks, saniye, o an oynayan linkin URL'si, o an oynayan içeriğin başlığı)."""
     if os.path.exists(STATE_FILE_NAME):
         if os.path.getsize(STATE_FILE_NAME) == 0:
             print(f"⚠️ Yerel state dosyası boş ({STATE_FILE_NAME}), 0'dan başlanıyor.")
-            return 0, 0, ""
+            return 0, 0, "", ""
         try:
             with open(STATE_FILE_NAME, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 idx = data.get("last_index", 0)
                 sec = data.get("last_seconds", 0)
                 url = data.get("last_url", "")
+                title = data.get("last_title", "")
                 print(f"✅ Yerel state okundu ({STATE_FILE_NAME}) => İndeks: {idx}, Saniye: {sec}")
-                return idx, sec, url
+                return idx, sec, url, title
         except Exception as e:
             print(f"⚠️ Yerel state okuma hatası: {e}")
     else:
         print(f"ℹ️ Yerel state dosyası bulunamadı, 0'dan başlanıyor.")
-    return 0, 0, ""
+    return 0, 0, "", ""
 
 
-def update_local_state(index, seconds, url=""):
-    """Son konumu (indeks, saniye) ve o an oynayan linkin URL'sini yerel state dosyasına kaydeder."""
+def update_local_state(index, seconds, url="", title=""):
+    """Son konumu (indeks, saniye), o an oynayan linkin URL'sini ve içerik başlığını
+    yerel state dosyasına kaydeder."""
     try:
-        data = {"last_index": int(index), "last_seconds": int(seconds), "last_url": url}
+        data = {
+            "last_index": int(index),
+            "last_seconds": int(seconds),
+            "last_url": url,
+            "last_title": title,
+        }
         with open(STATE_FILE_NAME, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         print(f"💾 Konum yerel dosyaya kaydedildi => İndeks: {index}, Saniye: {int(seconds)}")
@@ -165,7 +177,7 @@ def start_m3u_stream():
 
     download_logo()
 
-    current_index, last_seconds, last_url = get_local_state()
+    current_index, last_seconds, last_url, last_title = get_local_state()
 
     consecutive_fast_failures = 0
     FAST_FAIL_THRESHOLD_SECONDS = 20
@@ -181,18 +193,31 @@ def start_m3u_stream():
             current_index = 0
             last_seconds = 0
             last_url = ""
+            last_title = ""
 
         current_item = playlist[current_index]
         target_stream_url = current_item["url"]
         film_title = current_item["title"]
 
         if last_seconds > 0 and last_url and target_stream_url != last_url:
-            print(f"🔄 Bu sıradaki ({current_index + 1}) içeriğin linki değişmiş, video baştan başlatılacak.")
-            print(f"   Eski link: {last_url}")
-            print(f"   Yeni link: {target_stream_url}")
-            last_seconds = 0
+            if last_title and film_title == last_title:
+                # Aynı film, sadece kaynak linki değişmiş (mirror/CDN yenilemesi).
+                # Senkron güvenliği için birkaç saniye geriden devam edilir.
+                old_seconds = last_seconds
+                last_seconds = max(0, last_seconds - LINK_CHANGE_REWIND_SECONDS)
+                print(f"🔄 Bu sıradaki ({current_index + 1}) içeriğin linki değişmiş, "
+                      f"ancak film aynı ('{film_title}'). {old_seconds}s yerine "
+                      f"{last_seconds}s'den devam edilecek.")
+                print(f"   Eski link: {last_url}")
+                print(f"   Yeni link: {target_stream_url}")
+            else:
+                # Başlık da değişmiş -> playlist'teki içerik gerçekten değiştirilmiş.
+                print(f"🆕 Bu sıradaki ({current_index + 1}) içerik gerçekten değişmiş "
+                      f"('{last_title}' -> '{film_title}'), video baştan başlatılacak.")
+                last_seconds = 0
 
         last_url = target_stream_url
+        last_title = film_title
 
         write_title_file(film_title)
 
@@ -353,7 +378,7 @@ def start_m3u_stream():
                     last_progress_time[0] = now
 
                     if now - last_save_time > 30:
-                        update_local_state(current_index, current_stream_seconds, target_stream_url)
+                        update_local_state(current_index, current_stream_seconds, target_stream_url, film_title)
                         last_save_time = now
 
                     if now - last_dashboard_time > 30:
@@ -367,7 +392,8 @@ def start_m3u_stream():
             current_index += 1
             last_seconds = 0
             last_url = ""
-            update_local_state(current_index, 0, "")
+            last_title = ""
+            update_local_state(current_index, 0, "", "")
             consecutive_fast_failures = 0
         else:
             if process.returncode == -6:
@@ -393,12 +419,13 @@ def start_m3u_stream():
                 current_index += 1
                 last_seconds = 0
                 last_url = ""
+                last_title = ""
                 consecutive_fast_failures = 0
-                update_local_state(current_index, 0, "")
+                update_local_state(current_index, 0, "", "")
             else:
                 last_seconds = current_stream_seconds
                 last_url = target_stream_url
-                update_local_state(current_index, last_seconds, last_url)
+                update_local_state(current_index, last_seconds, last_url, film_title)
 
         if consecutive_fast_failures > 0:
             retry_delay = min(5 * (2 ** consecutive_fast_failures), MAX_RETRY_DELAY_SECONDS)
