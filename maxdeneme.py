@@ -257,7 +257,7 @@ def start_m3u_stream():
             f"drawtext=text='{TICKER_TEXT}':fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white:fontsize=19:"
             f"box=1:boxcolor=black@0.0:boxborderw=10:"
-            f"x='w-mod(t*150\, w+tw)':y=h-th-20"
+            f"x='w-mod(t*99\, w+tw)':y=h-th-20"
         )
 
         if has_logo1:
