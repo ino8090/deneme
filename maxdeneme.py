@@ -29,6 +29,9 @@ LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.4"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# Ekranın altındaki kayan yazı metni
+TICKER_TEXT = "MAX MEDYA AİT KANALLAR - MAX TV MAX YERLİ MAX PREMİER - MAX TV KANALI MAX MEDYA GRUBUBA AİTTİR"
+
 
 def format_hms(total_seconds):
     """Saniyeyi SS:DD:SS formatına çevirir."""
@@ -200,10 +203,8 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # Sadece saniye 0'dan büyükse -ss parametresini ekle
         ss_arg = ['-ss', str(last_seconds)] if last_seconds > 0 else []
 
-        # FFmpeg kilitlenmesini engelleyen hızlı bağlantı ve atlama ayarları
         input_options = [
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
@@ -225,7 +226,6 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
-            # Donmayı önleyen '-re' parametresi input öncesine eklendi
             input_args = (
                 input_options + ss_arg + ['-re', '-i', video_url] +
                 input_options + ss_arg + ['-re', '-i', audio_url]
@@ -234,7 +234,6 @@ def start_m3u_stream():
             logo1_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            # Donmayı önleyen '-re' parametresi input öncesine eklendi
             input_args = input_options + ss_arg + ['-re', '-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
@@ -246,10 +245,19 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
+        # Film başlığı yazısı (Kayan yazının üstünde hizalandı)
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
-            f"x=80:y=main_h-th-67"
+            f"x=80:y=main_h-th-80"
+        )
+
+        # Kayan yazı ve siyah arka plan bandı
+        ticker_drawtext = (
+            f"drawtext=text='{TICKER_TEXT}':fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white:fontsize=19:"
+            f"box=1:boxcolor=black@0.0:boxborderw=10:"
+            f"x='w-mod(t*150\, w+tw)':y=h-th-20"
         )
 
         if has_logo1:
@@ -259,15 +267,17 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:91,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-104:80[tmp];'
-                f'[tmp]{title_drawtext}[v]'
+                '[main][logo1]overlay=main_w-overlay_w-104:80[tmp1];'
+                f'[tmp1]{title_drawtext}[tmp2];'
+                f'[tmp2]{ticker_drawtext}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[main]{title_drawtext}[v]'
+                f'[main]{title_drawtext}[tmp1];'
+                f'[tmp1]{ticker_drawtext}[v]'
             )
 
         command = [
