@@ -30,7 +30,7 @@ TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 # Ekranın altındaki kayan yazı metni
-TICKER_TEXT = "MAX MEDYA AİT KANALLAR - MAX TV MAX YERLİ MAX PREMİER - MAX TV KANALI MAX MEDYA GRUBUBA AİTTİR"
+TICKER_TEXT = ""
 
 
 def format_hms(total_seconds):
@@ -255,9 +255,9 @@ def start_m3u_stream():
         # Kayan yazı ve siyah arka plan bandı
         ticker_drawtext = (
             f"drawtext=text='{TICKER_TEXT}':fontfile='{BOLD_FONT_PATH}':"
-            f"fontcolor=white:fontsize=19:"
+            f"fontcolor=white:fontsize=0:"
             f"box=1:boxcolor=black@0.0:boxborderw=10:"
-            f"x='w-mod(t*99\, w+tw)':y=h-th-20"
+            f"x='w-mod(t*0\, w+tw)':y=h-th-20"
         )
 
         if has_logo1:
