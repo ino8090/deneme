@@ -4,7 +4,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# Çift yayın çalışmasını ve çakışmayı önleyen kural
 concurrency:
   group: yesilcam-stream
   cancel-in-progress: true
@@ -15,27 +14,32 @@ jobs:
     timeout-minutes: 360
     permissions:
       contents: write
+
     steps:
     - name: 📥 Depoyu klonla
       uses: actions/checkout@v4
-      
+
     - name: 🐍 Python kurulumu
       uses: actions/setup-python@v5
       with:
         python-version: '3.10'
-        
-    - name: 📦 FFmpeg ve Kurulumlar
+
+    - name: 📦 FFmpeg, Fontlar ve Bağımlılıkların Kurulumu
       run: |
         sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl
+        sudo apt-get install -y --no-install-recommends ffmpeg ca-certificates openssl fonts-dejavu-core
         pip install requests
+
+    - name: 🧹 Eski Pipe ve Kalıntıları Temizle
+      run: |
+        rm -f /tmp/playout_pipe.nut title.txt logo.png
 
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
       run: |
         curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_yesilcam.json -o state_yesilcam.json
 
-    - name: 🚀 Yayını başlat
+    - name: 🚀 Playout Motorunu Başlat
       env:
         STATE_FILE_NAME: "state_yesilcam.json"
       run: python -u yesilcam.py
