@@ -39,7 +39,12 @@ def load_state():
                 data = json.load(f)
                 index = data.get("index", 0)
                 seek_time = data.get("seek_time", 0)
-                logging.info(f"💾 Kayıtlı durum yüklendi: Film Indeksi={index}, Kaldığı Saniye={seek_time}s")
+                
+                mins, secs = divmod(int(seek_time), 60)
+                hrs, mins = divmod(mins, 60)
+                time_fmt = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
+                
+                logging.info(f"💾 Kayıtlı durum yüklendi: Film Indeksi={index}, Kaldığı Süre={time_fmt} ({int(seek_time)} sn)")
                 return index, seek_time
         except Exception as e:
             logging.error(f"⚠️ State dosyası okunurken hata oluştu: {e}")
@@ -163,12 +168,15 @@ def start_master_encoder():
 def feed_video_to_pipe(video_url, current_index, seek_time=0):
     """
     Slave Feeder: Videoları boru hattına standart 1080p 25fps olarak besler.
-    Kaldığı saniyeyi (-ss) atlar ve her 10 saniyede bir durumu kaydeder.
+    Kaldığı saniyeyi (-ss) atlar, anlık dakikayı loglara basar ve durumu kaydeder.
     """
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
 
     if seek_time > 0:
-        logging.info(f"⏩ Film {seek_time}. saniyeden başlatılıyor...")
+        mins, secs = divmod(int(seek_time), 60)
+        hrs, mins = divmod(mins, 60)
+        time_fmt = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
+        logging.info(f"⏩ Film {time_fmt} süresinden ({int(seek_time)}. saniye) başlatılıyor...")
         cmd.extend(["-ss", str(seek_time)])
 
     cmd.extend([
@@ -194,7 +202,19 @@ def feed_video_to_pipe(video_url, current_index, seek_time=0):
         while proc.poll() is None:
             time.sleep(10)
             elapsed = time.time() - start_timestamp
+            
+            # Saniyeyi Dakika/Saat cinsinden loglama formatına çeviriyoruz
+            mins, secs = divmod(int(elapsed), 60)
+            hrs, mins = divmod(mins, 60)
+            
+            if hrs > 0:
+                time_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+            else:
+                time_str = f"{mins:02d}:{secs:02d}"
+                
+            logging.info(f"⏳ Oynatılıyor -> Dakika: {time_str} (Toplam: {int(elapsed)} sn)")
             save_state(current_index, elapsed)
+
     except Exception as e:
         logging.error(f"⚠️ Video aktarımında hata: {e}")
         proc.kill()
