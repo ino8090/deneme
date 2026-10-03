@@ -438,6 +438,3 @@ def start_m3u_stream():
 
 if __name__ == "__main__":
     start_m3u_stream()
-
-
-Elimde böyle py kodu var bant yayın için olur mu
