@@ -4,10 +4,10 @@
 import os
 import sys
 import time
+import json
 import re
 import logging
 import subprocess
-from datetime import datetime, timedelta
 import requests
 
 # ===================== AYARLAR =====================
@@ -18,17 +18,51 @@ DESTINATION_RTMP = f"{RTMP_URL.rstrip('/')}/{STREAM_KEY}"
 M3U_URL = os.getenv("M3U_URL", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/prasss.m3u")
 LOGO_URL = os.getenv("LOGO_URL", "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1790197529120.png")
 
+STATE_FILE = os.getenv("STATE_FILE_NAME", "state_yesilcam.json")
 PIPE_PATH = "/tmp/playout_pipe.nut"
 TITLE_FILE = "title.txt"
 LOGO_FILE = "logo.png"
-
-DEFAULT_FILM_DURATION_MINUTES = 100 
 
 LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+
+# ===================== STATE (DURUM) YÖNETİMİ =====================
+def load_state():
+    """Önceki yayından kalan film indeksini ve kaldığı saniyeyi yükler."""
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                index = data.get("index", 0)
+                seek_time = data.get("seek_time", 0)
+                
+                mins, secs = divmod(int(seek_time), 60)
+                hrs, mins = divmod(mins, 60)
+                time_fmt = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
+                
+                logging.info(f"💾 Kayıtlı durum yüklendi: Film Indeksi={index}, Kaldığı Süre={time_fmt} ({int(seek_time)} sn)")
+                return index, seek_time
+        except Exception as e:
+            logging.error(f"⚠️ State dosyası okunurken hata oluştu: {e}")
+    return 0, 0
+
+
+def save_state(index, seek_time):
+    """Mevcut index ve saniyeyi diskte kaydeder."""
+    try:
+        data = {
+            "index": index,
+            "seek_time": int(seek_time),
+            "updated_at": time.time()
+        }
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logging.error(f"⚠️ State kaydedilemedi: {e}")
 
 
 # ===================== YARDIMCI FONKSİYONLAR =====================
@@ -83,69 +117,9 @@ def parse_m3u(url):
     return []
 
 
-# ===================== SIRALI DİNAMİK EPG / SAAT ÇİZELGESİ =====================
-def build_daily_schedule(playlist):
-    if not playlist:
-        return []
-
-    now = datetime.now()
-    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    current_pointer = start_of_day
-
-    schedule = []
-    film_index = 0
-
-    while current_pointer.day == now.day:
-        film = playlist[film_index % len(playlist)]
-        duration = timedelta(minutes=DEFAULT_FILM_DURATION_MINUTES)
-        end_pointer = current_pointer + duration
-
-        schedule.append({
-            "title": film["title"],
-            "url": film["url"],
-            "start_time": current_pointer,
-            "end_time": end_pointer
-        })
-
-        current_pointer = end_pointer
-        film_index += 1
-
-    return schedule
-
-
-def print_schedule_log(schedule):
-    """Günün 24 saatlik yayın akışını log ekranına şık bir tablo olarak basar."""
-    now = datetime.now()
-    logging.info("=" * 60)
-    logging.info(f"📅 GÜNLÜK YAYIN AKIŞI ÇİZELGESİ ({now.strftime('%d.%m.%Y')})")
-    logging.info("=" * 60)
-    
-    for idx, item in enumerate(schedule, start=1):
-        start_str = item["start_time"].strftime("%H:%M")
-        end_str = item["end_time"].strftime("%H:%M")
-        
-        # Şu an yayında olan filmi işaretle
-        is_current = item["start_time"] <= now < item["end_time"]
-        status_icon = "▶ [ŞU AN YAYINDA]" if is_current else " "
-        
-        logging.info(f"{idx:02d}. [{start_str} - {end_str}] {item['title']} {status_icon}")
-        
-    logging.info("=" * 60)
-
-
-def get_current_program(schedule):
-    now = datetime.now()
-
-    for item in schedule:
-        if item["start_time"] <= now < item["end_time"]:
-            seek_seconds = (now - item["start_time"]).total_seconds()
-            return item, seek_seconds
-
-    return None, 0
-
-
 # ===================== PLAYOUT MOTORU =====================
 def start_master_encoder():
+    """Master Encoder: RTMP Bağlantısını açar ve kesintisiz katman yayını yapar."""
     has_logo = os.path.exists(LOGO_FILE) and os.path.getsize(LOGO_FILE) > 0
 
     title_drawtext = (
@@ -191,16 +165,19 @@ def start_master_encoder():
     return subprocess.Popen(cmd)
 
 
-def feed_video_to_pipe(film_title, video_url, seek_seconds=0):
-    """Slave Feeder: Filmi ve anlık geçen dakikayı detaylı loglar."""
+def feed_video_to_pipe(video_url, current_index, seek_time=0):
+    """
+    Slave Feeder: Videoları boru hattına standart 1080p 25fps olarak besler.
+    Kaldığı saniyeyi (-ss) atlar, anlık dakikayı loglara basar ve durumu kaydeder.
+    """
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
 
-    if seek_seconds > 0:
-        mins, secs = divmod(int(seek_seconds), 60)
+    if seek_time > 0:
+        mins, secs = divmod(int(seek_time), 60)
         hrs, mins = divmod(mins, 60)
         time_fmt = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
-        logging.info(f"⏩ Senkronizasyon: '{film_title}' filmi {time_fmt} ({int(seek_seconds)}. sn) noktasından başlatılıyor.")
-        cmd.extend(["-ss", str(seek_seconds)])
+        logging.info(f"⏩ Film {time_fmt} süresinden ({int(seek_time)}. saniye) başlatılıyor...")
+        cmd.extend(["-ss", str(seek_time)])
 
     cmd.extend([
         "-reconnect", "1",
@@ -219,31 +196,40 @@ def feed_video_to_pipe(film_title, video_url, seek_seconds=0):
     ])
 
     proc = subprocess.Popen(cmd)
-    start_timestamp = time.time() - seek_seconds
+    start_timestamp = time.time() - seek_time
 
     try:
         while proc.poll() is None:
             time.sleep(10)
             elapsed = time.time() - start_timestamp
             
+            # Saniyeyi Dakika/Saat cinsinden loglama formatına çeviriyoruz
             mins, secs = divmod(int(elapsed), 60)
             hrs, mins = divmod(mins, 60)
-            time_str = f"{hrs:02d}:{mins:02d}:{secs:02d}" if hrs > 0 else f"{mins:02d}:{secs:02d}"
             
-            logging.info(f"🎬 [YAYINDA] {film_title} | Oynatılan Saniye: {time_str} ({int(elapsed)} sn)")
+            if hrs > 0:
+                time_str = f"{hrs:02d}:{mins:02d}:{secs:02d}"
+            else:
+                time_str = f"{mins:02d}:{secs:02d}"
+                
+            logging.info(f"⏳ Oynatılıyor -> Dakika: {time_str} (Toplam: {int(elapsed)} sn)")
+            save_state(current_index, elapsed)
 
     except Exception as e:
         logging.error(f"⚠️ Video aktarımında hata: {e}")
         proc.kill()
 
     proc.wait()
-    logging.info(f"✅ '{film_title}' filminin yayını tamamlandı.")
+    save_state(current_index + 1, 0)
+    logging.info("✅ Videonun beslemesi tamamlandı.")
 
 
 def main():
     download_logo()
     create_named_pipe()
     update_title_file("Yeşilçam TV Canlı Yayın")
+
+    current_index, seek_time = load_state()
 
     master_process = start_master_encoder()
     time.sleep(2)
@@ -252,36 +238,25 @@ def main():
         while True:
             playlist = parse_m3u(M3U_URL)
             if not playlist:
-                logging.warning("⚠️ M3U listesi boş! 10 saniye bekleniyor...")
+                logging.warning("M3U listesi boş veya çekilemedi! 10 saniye bekleniyor...")
                 time.sleep(10)
                 continue
 
-            # Yayın Akışını Oluştur
-            schedule = build_daily_schedule(playlist)
-            
-            # Tüm Yayın Akışını Log Ekranında Göster
-            print_schedule_log(schedule)
+            if current_index >= len(playlist):
+                current_index = 0
+                seek_time = 0
 
-            current_prog, seek_seconds = get_current_program(schedule)
-
-            if not current_prog:
-                logging.warning("⚠️ Şu an oynatılacak program bulunamadı. 10 saniye bekleniyor...")
-                time.sleep(10)
-                continue
-
-            film_title = current_prog["title"]
-            target_url = current_prog["url"]
-
-            start_str = current_prog["start_time"].strftime("%H:%M")
-            end_str = current_prog["end_time"].strftime("%H:%M")
+            current_item = playlist[current_index]
+            target_url = current_item["url"]
+            film_title = current_item["title"]
 
             update_title_file(film_title)
-            logging.info(f"📺 [ŞU ANKİ PROGRAM] {film_title} (Saat: {start_str} - {end_str})")
+            logging.info(f"📺 [Sıra: {current_index + 1}/{len(playlist)}] Film: {film_title}")
 
-            # Videoyu boruya gönder
-            feed_video_to_pipe(film_title, target_url, seek_seconds)
+            feed_video_to_pipe(target_url, current_index, seek_time)
 
-            time.sleep(1)
+            current_index += 1
+            seek_time = 0
 
     except KeyboardInterrupt:
         logging.info("Yayın durduruluyor...")
