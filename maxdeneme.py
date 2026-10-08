@@ -429,7 +429,7 @@ def build_reader_command(target_url, seek_seconds):
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:x=w-tw-70:y=h-th-70"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=29:x=w-tw-70:y=h-th-70"
     )
     base_scale = (
         '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
