@@ -1,4 +1,5 @@
 name: fixtv
+
 on:
   push:
     branches: [ main ]
@@ -33,18 +34,18 @@ jobs:
     - name: 📥 Kayıtlı State Dosyasını İndir
       continue-on-error: true
       run: |
-        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_fixtv.json -o state_fixtv.json
+        curl -sL https://github.com/${{ github.repository }}/releases/download/state-data/state_maxtv.json -o state_maxtv.json
 
     - name: 🚀 Yayını başlat
       env:
-        STATE_FILE_NAME: "state_fixtv.json"
+        STATE_FILE_NAME: "state_maxtv.json"
       run: python -u maxdeneme.py
 
     - name: 💾 Son Durumu Release Üzerinde Güncelle
       if: always()
       uses: softprops/action-gh-release@v1
       with:
-        files: state_fixtv.json
+        files: state_maxtv.json
         tag_name: state-data
         name: "Yayın Kaldığı Yer (State)"
         draft: false
