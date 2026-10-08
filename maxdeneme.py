@@ -15,12 +15,6 @@ MİMARİ (RTMP kalıcı):
   Return code 0 tek başına yeterli değildir. Kaynak erken EOF verirse FFmpeg yine 0 döner.
   Bu yüzden film ancak toplam süreye (END_TOLERANCE_SECONDS payıyla) ulaşıldıysa bitmiş sayılır.
   Süre okunamadıysa da en az 60 saniye kesintisiz yayın yapılmış olması şartı aranır.
-
-DÜZELTME NOTU:
-  Çıkış FFmpeg'i "Could not find codec parameters ... unspecified size" hatasıyla ölüyordu.
-  Çözüm: analyzeduration/probesize büyütüldü (20 MB), 'nobuffer' bayrağı kaldırıldı,
-  okuyucuda x264 başlıkları (SPS/PPS) her anahtar karede tekrarlanır hale getirildi.
-  Ayrıca RTMP koptuğunda okuyucunun logları da yazdırılır ve art arda çıkış hatalarında bekleme artar.
 """
 
 import json
@@ -39,8 +33,8 @@ RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
 STREAM_KEY = os.getenv("STREAM_KEY") or "maxtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
-M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli1.m3u"
-LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1791483365056.png"
+M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli.m3u"
+LOGO_URL = os.getenv("LOGO_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/1787671958979.png"
 
 STATE_FILE_NAME = os.getenv("STATE_FILE_NAME", "maxtv.json")
 GITHUB_STEP_SUMMARY = os.getenv("GITHUB_STEP_SUMMARY")
@@ -57,10 +51,6 @@ TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
-
-# Çıkış FFmpeg'inin pipe'tan gelen MPEG-TS'i analiz ederken kullanacağı sınırlar.
-OUT_ANALYZE_DURATION = os.getenv("OUT_ANALYZE_DURATION", "20000000")  # mikrosaniye (20 sn)
-OUT_PROBESIZE = os.getenv("OUT_PROBESIZE", "20000000")                # bayt (20 MB)
 
 # İlerleme (time=) bu kadar sn gelmezse süreç donmuş sayılır.
 WATCHDOG_TIMEOUT_SECONDS = int(os.getenv("WATCHDOG_TIMEOUT_SECONDS", "45"))
@@ -99,11 +89,9 @@ class RtmpOutput:
         self.stderr_tail.clear()
         cmd = [
             'ffmpeg', '-hide_banner', '-loglevel', 'warning', '-nostats',
-            # DÜZELTME: 'nobuffer' kaldırıldı (analizi kısıtlıyordu)
-            '-fflags', '+genpts',
-            # DÜZELTME: analiz sınırları 3 MB -> 20 MB
-            '-analyzeduration', OUT_ANALYZE_DURATION,
-            '-probesize', OUT_PROBESIZE,
+            '-fflags', '+genpts+nobuffer',
+            '-analyzeduration', '3000000',
+            '-probesize', '3000000',
             '-f', 'mpegts', '-i', 'pipe:0',
             '-map', '0:v:0', '-map', '0:a:0?',
             '-c', 'copy',
@@ -188,7 +176,7 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
     for attempt in range(1, retries + 1):
         try:
             print(f"⏱️ ffprobe analizi başlatılıyor (Deneme {attempt}/{retries})...")
-
+            
             result = subprocess.run(
                 ffprobe_cmd,
                 stdout=subprocess.PIPE,
@@ -475,10 +463,7 @@ def build_reader_command(target_url, seek_seconds):
             '-filter_complex', filter_str,
             '-map', '[v]',
         ] + audio_map + [
-            # DÜZELTME: SPS/PPS başlıkları her anahtar karede tekrarlanır,
-            # böylece çıkış FFmpeg'i video boyutunu hemen bulur.
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-            '-x264-params', 'repeat-headers=1:keyint=50:min-keyint=50:scenecut=0',
             '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k', '-g', '50',
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
             '-flush_packets', '1', '-muxdelay', '0', '-muxpreload', '0',
@@ -566,9 +551,9 @@ def is_really_finished(result, base_seconds, total_duration_sec):
     """Film GERÇEKTEN bitti mi? Return code 0 tek başına yetmez."""
     if result.returncode != 0:
         return False
-
+    
     played_seconds = result.stream_seconds - base_seconds
-
+    
     # 10 saniyeden az oynatıldıysa kesinlikle kaynak erken koptu/seek hatası oluştu demektir.
     if played_seconds < 10:
         return False
@@ -576,7 +561,7 @@ def is_really_finished(result, base_seconds, total_duration_sec):
     # Toplam süre biliniyorsa tolerans kontrolü yap.
     if total_duration_sec > 0:
         return result.stream_seconds >= total_duration_sec - END_TOLERANCE_SECONDS
-
+    
     # Toplam süre bilinmiyorsa: Gerçekten bitti diyebilmek için en az 60 saniye kesintisiz yayın yapılmış olması gerekir.
     return played_seconds > 60
 
@@ -593,7 +578,6 @@ def start_m3u_stream():
     current_index, last_seconds, last_url, last_title = get_local_state()
 
     consecutive_failures = 0
-    output_failures = 0
     output = RtmpOutput(RTMP_SERVER)
 
     try:
@@ -655,24 +639,17 @@ def start_m3u_stream():
 
             # ---------- 1) RTMP çıkışı koptu ----------
             if result.output_broken:
-                output_failures += 1
                 print("🔴 Kalıcı RTMP çıkışı koptu. Çıkış süreci yeniden başlatılacak, film aynı saniyeden devam edecek.")
                 if output.stderr_tail:
                     print("🧾 Çıkış FFmpeg son log satırları:")
                     for l in output.stderr_tail:
-                        print(f"   {l}")
-                # DÜZELTME: okuyucu tarafında sorun var mı görebilmek için onun logları da yazdırılır
-                if result.stderr_tail:
-                    print("🧾 Okuyucu FFmpeg son log satırları:")
-                    for l in result.stderr_tail:
                         print(f"   {l}")
                 output.stop(force=True)
                 write_step_summary(film_title, current_index, playlist_len, result.stream_seconds,
                                    status="🔴 RTMP koptu, yeniden bağlanılıyor")
                 last_seconds = result.stream_seconds  # film hatası değil, sayaç artmaz
                 update_local_state(current_index, last_seconds, target_url, film_title)
-                # DÜZELTME: art arda çıkış hatalarında bekleme süresi kademeli artar (5, 10, 20, 30 sn)
-                retry_delay = min(5 * (2 ** (output_failures - 1)), 30)
+                retry_delay = 5
 
             # ---------- 2) Film gerçekten bitti ----------
             elif is_really_finished(result, last_seconds, total_duration_sec):
@@ -683,12 +660,10 @@ def start_m3u_stream():
                 last_seconds, last_url, last_title = 0, "", ""
                 update_local_state(current_index, 0, "", "")
                 consecutive_failures = 0
-                output_failures = 0
                 retry_delay = 0
 
             # ---------- 3) Kaynak koptu / erken bitti ----------
             else:
-                output_failures = 0  # çıkış sağlam, sorun kaynakta
                 if result.returncode == 0:
                     total_txt = format_hms(total_duration_sec) if total_duration_sec > 0 else "?"
                     print(f"⚠️ Okuyucu erken sonlandı (return code 0 ama film bitmedi): "
