@@ -718,6 +718,3 @@ def start_m3u_stream():
 
 if __name__ == "__main__":
     start_m3u_stream()
-
-
-Kodda sadece kalan süre göstergesini kaldır. Şimdi dediğimi yap kodun içindeki herşeyi koru anladın mı dediğimi
