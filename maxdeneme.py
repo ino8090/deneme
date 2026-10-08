@@ -431,6 +431,10 @@ def build_reader_command(target_url, seek_seconds):
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
         f"fontcolor=white@{TEXT_OPACITY}:fontsize=29:x=w-tw-70:y=h-th-70"
     )
+    time_drawtext = (
+        f"drawtext=textfile='time.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=0:x=0:y=h-th-0"
+    )
     base_scale = (
         '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
         'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
@@ -443,13 +447,15 @@ def build_reader_command(target_url, seek_seconds):
             base_scale +
             f'[{logo_index}:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
             '[main][logo1]overlay=50:50[tmp1];'
-            f'[tmp1]{title_drawtext}[v]'
+            f'[tmp1]{title_drawtext}[tmp2];'
+            f'[tmp2]{time_drawtext}[v]'
         )
     else:
         logo_inputs = []
         filter_str = (
             base_scale +
-            f'[main]{title_drawtext}[v]'
+            f'[main]{title_drawtext}[tmp2];'
+            f'[tmp2]{time_drawtext}[v]'
         )
 
     return (
@@ -516,6 +522,11 @@ def run_reader(command, output, base_seconds, total_duration_sec, ctx):
         hrs, mins, secs = m.groups()
         played = int(hrs) * 3600 + int(mins) * 60 + float(secs)
         current_seconds = base_seconds + played
+
+        if total_duration_sec > 0:
+            write_text_file('time.txt', format_hms(max(0, total_duration_sec - current_seconds)))
+        else:
+            write_text_file('time.txt', format_hms(current_seconds))
 
         now = time.time()
         progress[0] = now
@@ -601,6 +612,10 @@ def start_m3u_stream():
 
             probe_url = target_url.split(";")[0].strip()
             total_duration_sec = get_video_duration_ffprobe(probe_url)
+            write_text_file(
+                'time.txt',
+                format_hms(max(0, total_duration_sec - last_seconds) if total_duration_sec > 0 else 0),
+            )
 
             print("=" * 60)
             print("📺 Maxanimasyon Canlı Aktarım Yayını (1080p 25fps - 2500k) Başlatılıyor")
@@ -703,3 +718,6 @@ def start_m3u_stream():
 
 if __name__ == "__main__":
     start_m3u_stream()
+
+
+Kodda sadece kalan süre göstergesini kaldır. Şimdi dediğimi yap kodun içindeki herşeyi koru anladın mı dediğimi
