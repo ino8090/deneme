@@ -8,6 +8,7 @@ import os
 import re
 import json
 import requests
+import threading
 from collections import deque
 
 # ===================== AYARLAR =====================
@@ -29,6 +30,9 @@ LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.4"))
 TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+# Ekranın altındaki kayan yazı metni
+TICKER_TEXT = ""
+
 
 def format_hms(total_seconds):
     """Saniyeyi SS:DD:SS formatına çevirir."""
@@ -37,6 +41,79 @@ def format_hms(total_seconds):
     mins = (total_seconds % 3600) // 60
     secs = total_seconds % 60
     return f"{hrs:02d}:{mins:02d}:{secs:02d}"
+
+
+# ===================== KALICI RTMP YAYINCISI =====================
+class RtmpPublisher:
+    """
+    RTMP sunucusuna SÜREKLİ bağlı kalan tek bir FFmpeg süreci.
+    Filmleri kodlayan FFmpeg süreçleri çıktılarını (MPEG-TS) bu sürecin stdin'ine yazar.
+    Film değişince sadece kodlayıcı süreç yenilenir; RTMP bağlantısı hiç kapanmaz.
+    """
+
+    def __init__(self):
+        self.proc = None
+        self.started_at = 0.0
+        self.tail = deque(maxlen=30)
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def ensure_running(self):
+        if self.alive():
+            return
+        self.stop()
+        cmd = [
+            'ffmpeg', '-hide_banner', '-loglevel', 'warning',
+            '-fflags', '+genpts',
+            '-analyzeduration', '3000000',
+            '-probesize', '3000000',
+            '-f', 'mpegts', '-i', 'pipe:0',
+            '-c', 'copy',
+            '-bsf:a', 'aac_adtstoasc',
+            '-flvflags', 'no_duration_filesize',
+            '-f', 'flv',
+            RTMP_SERVER
+        ]
+        print(f"📡 Kalıcı RTMP yayıncısı başlatılıyor => {RTMP_SERVER}")
+        self.proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            bufsize=0
+        )
+        self.started_at = time.time()
+        threading.Thread(target=self._drain, args=(self.proc,), daemon=True).start()
+
+    def _drain(self, proc):
+        try:
+            for raw in iter(proc.stderr.readline, b''):
+                self.tail.append(raw.decode('utf-8', 'replace').rstrip())
+        except Exception:
+            pass
+
+    def clock(self):
+        """Yayıncı başladığından beri geçen gerçek süre (zaman damgası sürekliliği için)."""
+        return time.time() - self.started_at
+
+    def stop(self):
+        if self.proc is None:
+            return
+        try:
+            self.proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.wait(timeout=5)
+        except Exception:
+            pass
+        self.proc = None
+
+
+publisher = RtmpPublisher()
 
 
 def get_local_state():
@@ -200,17 +277,18 @@ def start_m3u_stream():
             f"Origin: https://vidmody.com\r\n"
         )
 
-        # FFmpeg kilitlenmesini engelleyen hızlı bağlantı ve atlama ayarları
+        ss_arg = ['-ss', str(last_seconds)] if last_seconds > 0 else []
+
         input_options = [
             '-headers', headers_arg,
             '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             '-err_detect', 'ignore_err',
-            '-analyzeduration', '2000000',
-            '-probesize', '2000000',
+            '-analyzeduration', '10000000',
+            '-probesize', '10000000',
             '-reconnect', '1',
             '-reconnect_at_eof', '1',
             '-reconnect_streamed', '1',
-            '-reconnect_delay_max', '2',
+            '-reconnect_delay_max', '10',
             '-rw_timeout', '10000000'
         ]
 
@@ -222,16 +300,15 @@ def start_m3u_stream():
             print(f"🎥 Video Bağlantısı : {video_url}")
             print(f"🔊 Ses Bağlantısı   : {audio_url}")
 
-            # -ss parametreleri en başa çekilerek doğrudan hedeflenen segmentten indirme yapılması sağlandı
             input_args = (
-                ['-ss', str(last_seconds)] + input_options + ['-i', video_url] +
-                ['-ss', str(last_seconds)] + input_options + ['-i', audio_url]
+                input_options + ss_arg + ['-re', '-i', video_url] +
+                input_options + ss_arg + ['-re', '-i', audio_url]
             )
             audio_map = ['-map', '1:a:0?']
             logo1_input_index = 2
         else:
             print(f"📡 Kaynak Yayın     : {target_stream_url}")
-            input_args = ['-ss', str(last_seconds)] + input_options + ['-i', target_stream_url]
+            input_args = input_options + ss_arg + ['-re', '-i', target_stream_url]
             audio_map = ['-map', '0:a:0?']
             logo1_input_index = 1
 
@@ -242,10 +319,19 @@ def start_m3u_stream():
 
         has_logo1 = os.path.exists('logo.png') and os.path.getsize('logo.png') > 0
 
+        # Film başlığı yazısı (Kayan yazının üstünde hizalandı)
         title_drawtext = (
             f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
             f"fontcolor=white@{TEXT_OPACITY}:fontsize=30:"
-            f"x=80:y=main_h-th-67"
+            f"x=80:y=main_h-th-80"
+        )
+
+        # Kayan yazı ve siyah arka plan bandı
+        ticker_drawtext = (
+            f"drawtext=text='{TICKER_TEXT}':fontfile='{BOLD_FONT_PATH}':"
+            f"fontcolor=white:fontsize=0:"
+            f"box=1:boxcolor=black@0.0:boxborderw=10:"
+            f"x='w-mod(t*0\, w+tw)':y=h-th-20"
         )
 
         if has_logo1:
@@ -255,16 +341,25 @@ def start_m3u_stream():
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
                 f'[{logo1_input_index}:v]scale=-2:91,format=rgba,'
                 f'colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-                '[main][logo1]overlay=main_w-overlay_w-104:80[tmp];'
-                f'[tmp]{title_drawtext}[v]'
+                '[main][logo1]overlay=main_w-overlay_w-104:80[tmp1];'
+                f'[tmp1]{title_drawtext}[tmp2];'
+                f'[tmp2]{ticker_drawtext}[v]'
             )
         else:
             logo_inputs = []
             filter_str = (
                 '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
                 'pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,fps=25[main];'
-                f'[main]{title_drawtext}[v]'
+                f'[main]{title_drawtext}[tmp1];'
+                f'[tmp1]{ticker_drawtext}[v]'
             )
+
+        # Kalıcı yayıncı ölmüşse (gerçek bir kopma) yeniden başlat
+        publisher.ensure_running()
+
+        # Zaman damgaları filmler arasında kesintisiz ilerlesin diye
+        # yayıncının başlangıcından beri geçen gerçek süre kadar kaydırılır.
+        ts_offset = publisher.clock() + 1.0
 
         command = [
             'ffmpeg'
@@ -284,14 +379,17 @@ def start_m3u_stream():
             '-b:a', '128k',
             '-ac', '2',
             '-ar', '44100',
-            '-f', 'flv',
-            RTMP_SERVER
+            '-output_ts_offset', f'{ts_offset:.3f}',
+            '-flush_packets', '1',
+            '-f', 'mpegts',
+            'pipe:1'
         ]
 
         print("▶ FFmpeg başlatıldı, 1080p 25fps @ 2500k yayın iletiliyor...")
 
         process = subprocess.Popen(
             command,
+            stdout=publisher.proc.stdin,   # Çıktı kalıcı yayıncıya akar; bu süreç bitince boru kapanmaz
             stderr=subprocess.PIPE,
             universal_newlines=True
         )
@@ -361,4 +459,9 @@ def start_m3u_stream():
 
 
 if __name__ == "__main__":
-    start_m3u_stream()
+    try:
+        start_m3u_stream()
+    except KeyboardInterrupt:
+        print("\n🛑 Durduruluyor...")
+    finally:
+        publisher.stop()
