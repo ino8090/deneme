@@ -30,7 +30,7 @@ import requests
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "maxtv"
+STREAM_KEY = os.getenv("STREAM_KEY") or "maxpremier"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli1.m3u"
@@ -46,8 +46,8 @@ STREAM_USER_AGENT = (
 STREAM_REFERER = "https://vidmody.com/"
 STREAM_ORIGIN = "https://vidmody.com"
 
-LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "0.4"))
-TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "0.5"))
+LOGO_OPACITY = float(os.getenv("LOGO_OPACITY", "1.0"))
+TEXT_OPACITY = float(os.getenv("TEXT_OPACITY", "1.0"))
 BOLD_FONT_PATH = os.getenv("BOLD_FONT_PATH", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 DECODER_THREADS = os.getenv("DECODER_THREADS", "1")
@@ -71,6 +71,12 @@ SEEK_BACKOFF_AFTER_FAILURES = int(os.getenv("SEEK_BACKOFF_AFTER_FAILURES", "2"))
 MAX_CONSECUTIVE_FAILURES = int(os.getenv("MAX_CONSECUTIVE_FAILURES", "4"))
 FAST_FAIL_THRESHOLD_SECONDS = 20
 MAX_RETRY_DELAY_SECONDS = 120
+
+# ÇİFT URL ("video;ses") AYARLARI
+# Bu kadar art arda hızlı hatadan sonra sadece video URL'si ile denenir (0 = kapalı).
+DUAL_FALLBACK_AFTER_FAILURES = int(os.getenv("DUAL_FALLBACK_AFTER_FAILURES", "3"))
+# Ayrı ses akışında zaman kaymalarını düzelten senkron filtresi (1 = açık, 0 = kapalı).
+DUAL_AUDIO_SYNC = os.getenv("DUAL_AUDIO_SYNC", "1") == "1"
 
 
 # ===================== KALICI RTMP ÇIKIŞ SÜRECİ =====================
@@ -385,6 +391,22 @@ HEADERS_ARG = (
 )
 
 
+def split_dual_url(target_url):
+    """'video;ses' biçimini ayrıştırır. (video_url, audio_url) döner; tek URL ise audio_url boştur."""
+    video_url, _, audio_url = target_url.partition(";")
+    return video_url.strip(), audio_url.strip()
+
+
+def get_total_duration(target_url):
+    """Toplam süre: önce video URL'sinden, okunamazsa (çift URL ise) ses URL'sinden denenir."""
+    video_url, audio_url = split_dual_url(target_url)
+    duration = get_video_duration_ffprobe(video_url)
+    if duration > 0 or not audio_url:
+        return duration
+    print("ℹ️ Video süresi okunamadı, ses URL'sinden süre deneniyor...")
+    return get_video_duration_ffprobe(audio_url)
+
+
 def make_input_options(url):
     is_hls = '.m3u8' in url.lower()
     opts = [
@@ -411,25 +433,30 @@ def make_input_options(url):
     return opts
 
 
-def build_reader_command(target_url, seek_seconds):
+def build_reader_command(target_url, seek_seconds, video_only=False):
     seek_args = ['-ss', str(int(seek_seconds))] if seek_seconds > 0 else []
 
-    if ";" in target_url:
-        video_url, audio_url = (p.strip() for p in target_url.split(";", 1))
+    video_url, audio_url = split_dual_url(target_url)
+    audio_filter = []
+
+    if audio_url and not video_only:
         input_args = (
             make_input_options(video_url) + seek_args + ['-i', video_url] +
             make_input_options(audio_url) + seek_args + ['-i', audio_url]
         )
         audio_map = ['-map', '1:a:0?']
         logo_index = 2
+        if DUAL_AUDIO_SYNC:
+            # Ayrı gelen ses akışının zaman damgası kaymalarını düzeltir.
+            audio_filter = ['-af', 'aresample=async=1:first_pts=0']
     else:
-        input_args = make_input_options(target_url) + seek_args + ['-i', target_url]
+        input_args = make_input_options(video_url) + seek_args + ['-i', video_url]
         audio_map = ['-map', '0:a:0?']
         logo_index = 1
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=29:x=70:y=h-th-70"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=29:x=55:y=h-th-55"
     )
     base_scale = (
         '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
@@ -441,8 +468,8 @@ def build_reader_command(target_url, seek_seconds):
         logo_inputs = ['-i', 'logo.png']
         filter_str = (
             base_scale +
-            f'[{logo_index}:v]scale=-2:85,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
-            '[main][logo1]overlay=W-w-50:50[tmp1];'
+            f'[{logo_index}:v]scale=-2:91,format=rgba,colorchannelmixer=aa={LOGO_OPACITY}[logo1];'
+            '[main][logo1]overlay=W-w-100:80[tmp1];'
             f'[tmp1]{title_drawtext}[v]'
         )
     else:
@@ -456,7 +483,7 @@ def build_reader_command(target_url, seek_seconds):
         ['ffmpeg'] + input_args + logo_inputs + [
             '-filter_complex', filter_str,
             '-map', '[v]',
-        ] + audio_map + [
+        ] + audio_map + audio_filter + [
             '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
             '-r', '25', '-b:v', '2500k', '-maxrate', '2500k', '-bufsize', '3000k', '-g', '50',
             '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '44100',
@@ -604,8 +631,7 @@ def start_m3u_stream():
             last_title = film_title
             write_text_file('title.txt', film_title)
 
-            probe_url = target_url.split(";")[0].strip()
-            total_duration_sec = get_video_duration_ffprobe(probe_url)
+            total_duration_sec = get_total_duration(target_url)
             write_text_file(
                 'time.txt',
                 format_hms(max(0, total_duration_sec - last_seconds) if total_duration_sec > 0 else 0),
@@ -624,7 +650,16 @@ def start_m3u_stream():
             if not output.alive():
                 output.start()
 
-            command = build_reader_command(target_url, last_seconds)
+            _, dual_audio_url = split_dual_url(target_url)
+            video_only = bool(
+                dual_audio_url
+                and DUAL_FALLBACK_AFTER_FAILURES > 0
+                and consecutive_failures >= DUAL_FALLBACK_AFTER_FAILURES
+            )
+            if video_only:
+                print(f"🔁 Çift URL art arda {consecutive_failures} kez hata verdi, bu denemede sadece video URL'si kullanılacak.")
+
+            command = build_reader_command(target_url, last_seconds, video_only=video_only)
             print("▶ Okuyucu FFmpeg başlatıldı, kalıcı RTMP'ye aktarılıyor...")
 
             ctx = {"index": current_index, "url": target_url, "title": film_title, "playlist_len": playlist_len}
