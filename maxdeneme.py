@@ -25,12 +25,13 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from urllib.parse import urljoin
 
 import requests
 
 # ===================== AYARLAR =====================
 RTMP_URL = "rtmp://ssh101.bozztv.com:1935/ssh101"
-STREAM_KEY = os.getenv("STREAM_KEY") or "maxpremier"
+STREAM_KEY = os.getenv("STREAM_KEY") or "maxtv"
 RTMP_SERVER = f"{RTMP_URL}/{STREAM_KEY}"
 
 M3U_URL = os.getenv("M3U_URL") or "https://raw.githubusercontent.com/ino8090/0101/refs/heads/main/yerli1.m3u"
@@ -158,6 +159,48 @@ def format_hms(total_seconds):
     return f"{total_seconds // 3600:02d}:{(total_seconds % 3600) // 60:02d}:{total_seconds % 60:02d}"
 
 
+# URL -> süre (sn). Bağlantı kopup aynı film yeniden denendiğinde ffprobe tekrar çalıştırılmaz.
+_DURATION_CACHE = {}
+
+
+def get_hls_duration(url, depth=0):
+    """
+    HLS VOD listelerinde (#EXT-X-ENDLIST var) #EXTINF sürelerini toplayarak toplam süreyi hesaplar.
+    ffprobe'dan çok daha hızlıdır. Canlı HLS veya hata durumunda 0.0 döner (ffprobe'a düşülür).
+    """
+    if depth > 2 or '.m3u8' not in url.lower():
+        return 0.0
+    try:
+        headers = {'User-Agent': STREAM_USER_AGENT, 'Referer': STREAM_REFERER, 'Origin': STREAM_ORIGIN}
+        response = requests.get(url, headers=headers, timeout=10)
+        if response.status_code != 200:
+            return 0.0
+        lines = [l.strip() for l in response.text.splitlines() if l.strip()]
+        if not lines or not lines[0].startswith('#EXTM3U'):
+            return 0.0
+
+        # Master liste: ilk varyantın medya listesine in.
+        for i, l in enumerate(lines):
+            if l.startswith('#EXT-X-STREAM-INF'):
+                for nxt in lines[i + 1:]:
+                    if not nxt.startswith('#'):
+                        return get_hls_duration(urljoin(url, nxt), depth + 1)
+                return 0.0
+
+        # Canlı yayında ENDLIST olmaz, toplam süre yoktur.
+        if not any(l.startswith('#EXT-X-ENDLIST') for l in lines):
+            return 0.0
+
+        total = 0.0
+        for l in lines:
+            m = re.match(r'#EXTINF:([\d.]+)', l)
+            if m:
+                total += float(m.group(1))
+        return total
+    except Exception:
+        return 0.0
+
+
 def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
     """
     PROFESYONEL FFPROBE SÜRE TESPİT MEKANİZMASI:
@@ -165,30 +208,54 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
     - Ağ zaman aşımı (-rw_timeout) eklenerek kilitlenmeler önlenir.
     - JSON çıktısı analiz edilip hem format hem de stream seviyesinden süre çekilir.
     """
-    ffprobe_cmd = [
-        'ffprobe',
-        '-v', 'quiet',
-        '-print_format', 'json',
-        '-show_format',
-        '-show_streams',
-        '-allowed_extensions', 'ALL',
-        '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\nOrigin: {STREAM_ORIGIN}\r\n",
-        '-rw_timeout', str(timeout * 1000000),  # Mikrosaniye (15 sn)
-        '-analyzeduration', '10000000',         # Deep analysis (10s)
-        '-probesize', '10000000',               # Deep analysis (10MB)
-        video_url
+    # 1) Önbellek: aynı URL için ffprobe tekrar çalıştırılmaz.
+    if video_url in _DURATION_CACHE:
+        cached = _DURATION_CACHE[video_url]
+        print(f"⚡ Süre önbellekten alındı: {cached:.1f} sn ({format_hms(cached)})")
+        return cached
+
+    # 2) HLS VOD hızlı yol: playlist'ten süre hesaplanır, ffprobe'a gerek kalmaz.
+    hls_duration = get_hls_duration(video_url)
+    if hls_duration > 0:
+        _DURATION_CACHE[video_url] = hls_duration
+        print(f"⚡ HLS playlist'ten süre okundu: {hls_duration:.1f} sn ({format_hms(hls_duration)})")
+        return hls_duration
+
+    # 3) ffprobe: önce hızlı/hafif, olmazsa kademeli olarak daha derin analiz.
+    stages = [
+        (max(5, timeout // 2), 3000000),   # Hızlı deneme
+        (timeout, 10000000),               # Normal deneme
+        (timeout + 10, 20000000),          # Derin deneme
     ]
+
+    def build_cmd(attempt):
+        stage_timeout, stage_probe = stages[min(attempt, len(stages)) - 1]
+        cmd = [
+            'ffprobe',
+            '-v', 'quiet',
+            '-print_format', 'json',
+            '-show_format',
+            '-show_streams',
+            '-allowed_extensions', 'ALL',
+            '-headers', f"User-Agent: {STREAM_USER_AGENT}\r\nReferer: {STREAM_REFERER}\r\nOrigin: {STREAM_ORIGIN}\r\n",
+            '-rw_timeout', str(stage_timeout * 1000000),  # Mikrosaniye
+            '-analyzeduration', str(stage_probe),
+            '-probesize', str(stage_probe),
+            video_url
+        ]
+        return cmd, stage_timeout + 5
 
     for attempt in range(1, retries + 1):
         try:
             print(f"⏱️ ffprobe analizi başlatılıyor (Deneme {attempt}/{retries})...")
+            ffprobe_cmd, run_timeout = build_cmd(attempt)
 
             result = subprocess.run(
                 ffprobe_cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout + 5
+                timeout=run_timeout
             )
 
             if result.returncode != 0:
@@ -203,6 +270,7 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
                 try:
                     duration = float(data['format']['duration'])
                     if duration > 0:
+                        _DURATION_CACHE[video_url] = duration
                         print(f"✅ ffprobe ile süre okundu (Format): {duration:.1f} sn ({format_hms(duration)})")
                         return duration
                 except (ValueError, TypeError):
@@ -215,6 +283,7 @@ def get_video_duration_ffprobe(video_url, retries=3, timeout=15):
                         try:
                             duration = float(stream['duration'])
                             if duration > 0:
+                                _DURATION_CACHE[video_url] = duration
                                 print(f"✅ ffprobe ile süre okundu (Stream): {duration:.1f} sn ({format_hms(duration)})")
                                 return duration
                         except (ValueError, TypeError):
@@ -456,7 +525,7 @@ def build_reader_command(target_url, seek_seconds, video_only=False):
 
     title_drawtext = (
         f"drawtext=textfile='title.txt':reload=1:fontfile='{BOLD_FONT_PATH}':"
-        f"fontcolor=white@{TEXT_OPACITY}:fontsize=29:x=55:y=h-th-55"
+        f"fontcolor=white@{TEXT_OPACITY}:fontsize=29:x=58:y=h-th-58"
     )
     base_scale = (
         '[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,'
